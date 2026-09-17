@@ -1,0 +1,4 @@
+# Where markdown may live in this repo: <glob> <what belongs there>
+README.md What the repo is and how to run it
+CLAUDE.md Conventions for anyone (human or agent) working here
+docs/*.md Design notes, ADRs (docs/adr/) and runbooks
