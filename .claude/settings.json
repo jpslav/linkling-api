@@ -1,8 +1,8 @@
 {
   "permissions": {
     "ask": [
-      "Bash(git push --force*)",
-      "Bash(git push -f*)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
       "Bash(docker push *)"
     ],
     "deny": [
@@ -13,6 +13,9 @@
       "Read(//~/.ssh/**)",
       "Read(//~/.aws/credentials)",
       "Read(**/.netrc)"
+    ],
+    "allow": [
+      "Bash(git push --force-with-lease *)"
     ]
   },
   "autoContinueAtUsageLimit": true,
