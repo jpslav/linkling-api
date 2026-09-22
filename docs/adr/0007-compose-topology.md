@@ -1,8 +1,8 @@
 # ADR-0007 — Hosting topology, where the database lives, and backups
 
-- Status: Proposed
-- Approver: (pending)
-- Date: 2026-09-17
+- Status: Accepted
+- Approver: @jpslav
+- Date: 2026-09-22
 
 ## Context
 
@@ -60,3 +60,11 @@ is true of the whole product rather than of one container.
   possible at all.
 - The first release ships with manual backups, said out loud rather than implied.
 - The public site's host becomes a sentence on the privacy page.
+
+## Decision record
+
+Accepted 2026-09-22 by @jpslav, from line comments on [the definition PR](https://github.com/jpslav/tinyworks-program/pull/1). Written by `tools/decision-record.py`; each answer is also in its question file.
+
+- **Where is the public site hosted?** — **A.** A static container in your own compose — the promise holds for the whole product, at one more thing running — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074334805)) <!-- decided: 2026-09-17-hosting-backups-and-site-host/site-host: A -->
+- **How is the link database backed up in the first release?** — **A.** A documented backup command and a `linkling backup` verb — manual, and the README says so in its first paragraph — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074334945)) <!-- decided: 2026-09-17-hosting-backups-and-site-host/backups: A -->
+- **What host will every short link be printed with?** — **A.** Each deployment sets its own host in `LINKLING_PUBLIC_URL`; the product names none — put your domain in your comment — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074335333)) <!-- decided: 2026-09-17-short-url-and-host/host: A -->

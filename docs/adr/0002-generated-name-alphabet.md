@@ -1,8 +1,8 @@
 # ADR-0002 — The alphabet and length of generated names
 
-- Status: Proposed
-- Approver: (pending)
-- Date: 2026-09-17
+- Status: Accepted
+- Approver: @jpslav
+- Date: 2026-09-22
 
 ## Context
 
@@ -77,3 +77,10 @@ one-in-three event over the product's life, not a curiosity.
 rate*. Read twenty A′-6 names and twenty two-word names aloud over a call and have the
 listener type them; count how many arrive wrong per alphabet. If A′ loses badly the
 fallback is **three** words, not two — two is enumerable at team scale, per the table.
+
+## Decision record
+
+Accepted 2026-09-22 by @jpslav, from line comments on [the definition PR](https://github.com/jpslav/tinyworks-program/pull/1). Written by `tools/decision-record.py`; each answer is also in its question file.
+
+- **Is the set of link targets confidential — should a stranger be unable to list them by guessing names?** — **A.** Yes — nobody outside the team should be able to enumerate the targets — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074334367)) <!-- decided: 2026-09-17-generated-name-alphabet/confidential: A -->
+- **What should a made-up link name look like?** — **A.** Six characters from 28 symbols, no vowels, `y`, `0` or `1` — `x7kq2m`; the CLI prints a phonetic spelling beside it — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074334492)) <!-- decided: 2026-09-17-generated-name-alphabet/alphabet: A -->

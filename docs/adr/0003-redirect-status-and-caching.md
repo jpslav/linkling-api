@@ -1,8 +1,8 @@
 # ADR-0003 — The redirect status code and its cache lifetime
 
-- Status: Proposed
-- Approver: (pending)
-- Date: 2026-09-17
+- Status: Accepted
+- Approver: @jpslav
+- Date: 2026-09-22
 
 ## Context
 
@@ -74,3 +74,9 @@ Chrome, Firefox and Safari and check the server saw two requests each time; then
 with a bare `301` and see whether the second click arrives at all; then `301 + no-store` to
 see whether the header rescues it. **The counter is the instrument** — this is the brief's
 own "see the count go up" (`#L67`), run twice.
+
+## Decision record
+
+Accepted 2026-09-22 by @jpslav, from line comments on [the definition PR](https://github.com/jpslav/tinyworks-program/pull/1). Written by `tools/decision-record.py`; each answer is also in its question file.
+
+- **Should a redirect be cacheable by browsers?** — **A.** `302` with `Cache-Control: no-store`; `410` for expired and deleted links, `404` for unknown names, all `no-store` — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074335195)) <!-- decided: 2026-09-17-redirect-caching/redirect: A -->

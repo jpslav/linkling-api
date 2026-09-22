@@ -1,8 +1,8 @@
 # ADR-0006 — Auth, the stats page, and tenancy
 
-- Status: Proposed
-- Approver: (pending)
-- Date: 2026-09-17
+- Status: Accepted
+- Approver: @jpslav
+- Date: 2026-09-22
 
 ## Context
 
@@ -65,3 +65,10 @@ and an architecture, and it is the owner's to answer.
   service that refuses everything or refuses nothing.
 - Rotating the key locks out the whole team until everyone updates — acceptable at this
   scale, and the reason to revisit option C if the team grows or turns over.
+
+## Decision record
+
+Accepted 2026-09-22 by @jpslav, from line comments on [the definition PR](https://github.com/jpslav/tinyworks-program/pull/1). Written by `tools/decision-record.py`; each answer is also in its question file.
+
+- **Does one Linkling serve one team, or can several teams share one?** — **A.** One team per Linkling, choosing its own domain — a second team is a second compose stack, and names are unique per deployment — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074335757)) <!-- decided: 2026-09-17-tenancy-and-name-reuse/tenancy: A -->
+- **With one shared team key, who may delete a link?** — **A.** Anyone holding the team key may delete any link; its maker is recorded, not enforced — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074336017)) <!-- decided: 2026-09-17-tenancy-and-name-reuse/who-deletes: A -->

@@ -1,8 +1,8 @@
 # ADR-0001 — The shape of the short URL
 
-- Status: Proposed
-- Approver: (pending)
-- Date: 2026-09-17
+- Status: Accepted
+- Approver: @jpslav
+- Date: 2026-09-22
 
 ## Context
 
@@ -82,3 +82,10 @@ forgotten.
 **What would settle the only empirical question here:** whether anyone on the team
 currently pastes short links containing capitals — readable from the team's own chat
 history, and it bears only on (c).
+
+## Decision record
+
+Accepted 2026-09-22 by @jpslav, from line comments on [the definition PR](https://github.com/jpslav/tinyworks-program/pull/1). Written by `tools/decision-record.py`; each answer is also in its question file.
+
+- **Where do link names live, and where do the service's own routes go?** — **A.** Names at the root, `<host>/q3-plan`; the service's own routes under `<host>/-/…` — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074335483)) <!-- decided: 2026-09-17-short-url-and-host/routes: A -->
+- **Are names case-insensitive, folded to lowercase?** — **A.** Case-insensitive — names fold to lowercase when made and when looked up — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074335640)) <!-- decided: 2026-09-17-short-url-and-host/case: A -->

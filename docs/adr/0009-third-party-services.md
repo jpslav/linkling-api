@@ -1,8 +1,8 @@
 # ADR-0009 — No third party in the click path
 
-- Status: Proposed
-- Approver: (pending)
-- Date: 2026-09-17
+- Status: Accepted
+- Approver: @jpslav
+- Date: 2026-09-22
 
 ## Context
 
@@ -40,3 +40,9 @@ post-launch candidate); a QR-code library (`#L61` says later).
   impossible for the data already logged.
 - So "none" is the reversible position, and that is the argument for holding it now rather
   than an appeal to minimalism.
+
+## Decision record
+
+Accepted 2026-09-22 by @jpslav, from line comments on [the definition PR](https://github.com/jpslav/tinyworks-program/pull/1). Written by `tools/decision-record.py`; each answer is also in its question file.
+
+- **What will sit in front of the redirect service and terminate TLS?** — **A.** A proxy on a machine you run, logging no client addresses — say where in your comment — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074334678)) <!-- decided: 2026-09-17-hosting-backups-and-site-host/tls-front: A -->
