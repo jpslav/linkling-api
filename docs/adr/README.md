@@ -10,4 +10,5 @@
 | [0007](0007-compose-topology.md) | Hosting topology, where the database lives, and backups | Accepted |
 | [0008](0008-repo-layout-and-names.md) | Repo layout, the CLI vocabulary, and where the privacy truth lives | Accepted |
 | [0009](0009-third-party-services.md) | No third party in the click path | Accepted |
+| [0010](0010-ci-first-test-and-package-skeleton.md) | The first CI test asserts environment truth, not application behavior | Proposed |
 <!-- adr-index:end -->
