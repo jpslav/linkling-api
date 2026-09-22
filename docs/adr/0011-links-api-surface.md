@@ -1,7 +1,7 @@
 # ADR-0011 — The links API surface: routes, methods, status codes and JSON field names
 
-- Status: Proposed
-- Approver: (pending)
+- Status: Accepted
+- Approver: claude
 - Date: 2026-09-22
 
 ## Context
@@ -82,3 +82,15 @@ it from two variables, the server should send it.
 
 Proposed, pending a stakeholder's acceptance through the manager. Written while building
 LL-001, whose report names this file.
+
+## Decision record
+
+Accepted 2026-09-22 by `claude`, as the program manager `pm-2`, under two rows of
+`products/linkling/decision-policy.md`: *internal module layout* is Claude's inside a repo, and
+*build and release pipeline shape* is Claude's with an ADR. This is the JSON contract beneath the
+`/-/…` namespace **ADR-0001 already reserved**; it does not touch the short-URL shape, which is the
+owner's and is settled there. LL-003 (the CLI) and LL-016 (the stats page) may build against it.
+
+Deferred rather than decided, and recorded so it is not re-litigated: whether the API tolerates a
+trailing slash on `POST /-/api/links/`. It is refused today. Loosening later is additive;
+un-loosening is not.

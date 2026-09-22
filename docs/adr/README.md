@@ -10,7 +10,7 @@
 | [0007](0007-compose-topology.md) | Hosting topology, where the database lives, and backups | Accepted |
 | [0008](0008-repo-layout-and-names.md) | Repo layout, the CLI vocabulary, and where the privacy truth lives | Accepted |
 | [0009](0009-third-party-services.md) | No third party in the click path | Accepted |
-| [0010](0010-ci-first-test-and-package-skeleton.md) | The first CI test asserts environment truth, not application behavior | Proposed |
-| [0011](0011-links-api-surface.md) | The links API surface: routes, methods, status codes and JSON field names | Proposed |
-| [0012](0012-asgi-server-uvicorn.md) | uvicorn is the ASGI server, and the only new runtime dependency | Proposed |
+| [0010](0010-ci-first-test-and-package-skeleton.md) | The first CI test asserts environment truth, not application behavior | Accepted |
+| [0011](0011-links-api-surface.md) | The links API surface: routes, methods, status codes and JSON field names | Accepted |
+| [0012](0012-asgi-server-uvicorn.md) | uvicorn is the ASGI server, and the only new runtime dependency | Accepted |
 <!-- adr-index:end -->
