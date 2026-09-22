@@ -1,7 +1,7 @@
 # ADR-0012 — uvicorn is the ASGI server, and the only new runtime dependency
 
-- Status: Proposed
-- Approver: (pending)
+- Status: Accepted
+- Approver: claude
 - Date: 2026-09-22
 
 ## Context
@@ -62,3 +62,12 @@ downstream of that number, not upstream of it.
 
 Proposed, pending a stakeholder's acceptance through the manager. Written while building
 LL-001, whose report names this file.
+
+## Decision record
+
+Accepted 2026-09-22 by `claude`, as the program manager `pm-2`, under the *adding or removing a runtime
+dependency* row of `products/linkling/decision-policy.md`, which is Claude's with an ADR. The
+access-log requirement this carries is not a preference: uvicorn's default access log writes the
+clicker's IP address, which would break the privacy promise ADR-0004 states, so any compose file
+or run command must pass `--no-access-log` or a format without `client_addr`. LL-005 owns honouring
+that.

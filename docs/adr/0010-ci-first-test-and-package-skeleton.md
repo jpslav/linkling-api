@@ -1,7 +1,7 @@
 # ADR-0010 — The first CI test asserts environment truth, not application behavior
 
-- Status: Proposed
-- Approver: (pending)
+- Status: Accepted
+- Approver: claude
 - Date: 2026-09-22
 
 ## Context
@@ -57,3 +57,11 @@ before LL-001 lands.
 - `linkling-web` has no installable Python package (ADR-0008: hand-written HTML/CSS, no
   build step) and needed its own, separate version of this decision — see the sibling ADR
   in that repo.
+
+## Decision record
+
+Accepted 2026-09-22 by `claude`, as the program manager `pm-2`, under the *build and release
+pipeline shape* row of `products/linkling/decision-policy.md`, which is Claude's with an ADR.
+The brief fixes the gate — "nothing merges red" — and this records what the first test asserts
+while no application code exists: that CI runs the interpreter the brief names and that the
+package installs.
