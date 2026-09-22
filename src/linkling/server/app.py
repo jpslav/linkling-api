@@ -57,10 +57,13 @@ _ALLOWED_TARGET_SCHEMES = ("http", "https")
 _MAX_CREATED_BY = 256
 
 #: A target longer than this is refused. Without a cap, a 1 MB URL is accepted, stored,
-#: and then unfollowable: the `Location` header exceeds what clients and proxies accept
-#: (nginx buffers upstream headers at 4-8 KB), so the link "succeeds" and 502s forever
-#: after. 8 KiB is far above any real tracking URL, and widening it later is additive.
-_MAX_TARGET_LENGTH = 8192
+#: and then unfollowable: the `Location` header exceeds what clients and proxies will
+#: carry, so the link "succeeds" and 502s for everyone who follows it -- with its name
+#: reserved forever, because deletion does not free a name. The number has to sit *below*
+#: the smallest buffer in the path to do its job: nginx's default `proxy_buffer_size` is
+#: 4 KB, so 2 KiB leaves room for the rest of the response head. It is far above any real
+#: tracking URL, and widening it later is additive.
+_MAX_TARGET_LENGTH = 2048
 
 #: The largest request body the service will read. The key check cannot run before this:
 #: FastAPI parses the body while solving the route, so an unauthenticated caller would
@@ -109,6 +112,13 @@ class BodyLimitMiddleware:
             await _too_large(send, self.max_bytes)
             return
 
+        # A chunked body declares no length, so it can only be counted as it arrives.
+        # The flag is what the handler's `body_within_limit` dependency reads: cutting
+        # the body off and letting the request proceed made the outcome depend on packet
+        # timing -- the same over-limit request answered 422 when the excess arrived in
+        # the first chunk and **201** when it arrived after the handler's first read.
+        over_limit = {"hit": False}
+        scope["linkling.body_over_limit"] = over_limit
         received = 0
 
         async def receive_counting():
@@ -117,10 +127,7 @@ class BodyLimitMiddleware:
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > self.max_bytes:
-                    # A chunked body with no declared length. Cut it off rather than
-                    # keep buffering; the handler then sees a truncated body and answers
-                    # 422. Not as clear as the 413 above, but it is bounded, and a
-                    # disconnect here would surface as a 500.
+                    over_limit["hit"] = True
                     return {"type": "http.request", "body": b"", "more_body": False}
             return message
 
@@ -240,6 +247,19 @@ def create_app(config: Config | None = None) -> FastAPI:
         finally:
             conn.close()
 
+    def body_within_limit(request: Request) -> None:
+        """Answer 413 for a chunked body the middleware had to cut off.
+
+        The middleware can refuse a declared `Content-Length` outright, but a chunked
+        body is only countable as it arrives, and by then the handler may already have
+        read a complete, valid JSON prefix. Without this the same over-limit request
+        answered 422 or 201 depending on when the excess landed.
+        """
+        if request.scope.get("linkling.body_over_limit", {}).get("hit"):
+            raise HTTPException(
+                413, f"Request body larger than {_MAX_BODY_BYTES} bytes."
+            )
+
     def require_key(
         request: Request,
         authorization: Annotated[str | None, Header()] = None,
@@ -275,7 +295,11 @@ def create_app(config: Config | None = None) -> FastAPI:
     # this factory is invisible there, and each handler's `conn` silently became a query
     # parameter. The suite said so in 46 failures reading `loc: ["query", "conn"]`.
 
-    @app.post("/-/api/links", status_code=201, dependencies=[Depends(require_key)])
+    @app.post(
+        "/-/api/links",
+        status_code=201,
+        dependencies=[Depends(body_within_limit), Depends(require_key)],
+    )
     def create_link(
         body: CreateLink, conn: sqlite3.Connection = Depends(get_conn)
     ) -> dict[str, str]:

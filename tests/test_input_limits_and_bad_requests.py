@@ -22,18 +22,25 @@ def test_a_non_ascii_bearer_token_is_refused_not_a_crash(client, target):
     assert client.get("/q3-plan").status_code == 404
 
 
-def test_a_non_ascii_configured_key_is_refused_at_startup(tmp_path):
-    """The mirror of the test above, and the reason it is a startup failure.
+@pytest.mark.parametrize(
+    "key",
+    [
+        "clé-d-équipe",  # httpx will not encode a non-ASCII header value
+        "team\nkey",  # h11 refuses to build a header carrying a newline
+        "team\rkey",
+    ],
+)
+def test_a_key_no_client_could_send_is_refused_at_startup(tmp_path, key):
+    """A key that cannot go in a header is a service that refuses every write.
 
-    An HTTP header value cannot carry a non-ASCII character -- httpx raises
-    `UnicodeEncodeError` rather than send one -- so a service configured with such a key
-    would refuse every write while looking perfectly healthy. Better to not start.
+    It would look perfectly healthy while doing it, which is why this is a startup
+    failure rather than a 401 nobody can explain.
     """
     from linkling.server.config import ConfigError, load_config
 
-    with pytest.raises(ConfigError, match="must be ASCII"):
+    with pytest.raises(ConfigError, match="printable ASCII"):
         load_config(
-            {"LINKLING_API_KEY": "clé-d-équipe", "LINKLING_DB": str(tmp_path / "x.db")}
+            {"LINKLING_API_KEY": key, "LINKLING_DB": str(tmp_path / "x.db")}
         )
 
 
@@ -82,6 +89,63 @@ def test_an_enormous_body_is_refused_before_it_is_read(client, auth):
     )
     assert keyless.status_code == 413, keyless.status_code
     assert keyless.headers["cache-control"] == "no-store"
+
+
+def test_a_chunked_body_over_the_ceiling_is_refused_whenever_the_excess_arrives(
+    client, auth
+):
+    """A chunked body declares no length, so it is counted as it arrives.
+
+    Cutting it off and letting the request through made the answer depend on packet
+    timing: the same over-limit request was a 422 when the excess arrived in the first
+    chunk and a **201**, with the link created, when it arrived after the handler had
+    already read a valid JSON prefix. Both spellings below must be refused.
+    """
+    head = '{"url": "https://example.com/z", "name": "chunky"}'
+
+    def excess_after_valid_json():
+        yield head.encode()
+        yield b" " * 100000
+
+    late = client.post(
+        "/-/api/links",
+        content=excess_after_valid_json(),
+        headers={**auth, "Content-Type": "application/json"},
+    )
+    assert late.status_code == 413, late.status_code
+    assert client.get("/chunky").status_code == 404, "an over-limit request made a link"
+
+    def excess_first():
+        yield b" " * 100000
+        yield head.encode()
+
+    early = client.post(
+        "/-/api/links",
+        content=excess_first(),
+        headers={**auth, "Content-Type": "application/json"},
+    )
+    assert early.status_code == 413, early.status_code
+    assert client.get("/chunky").status_code == 404
+
+
+def test_a_target_at_the_length_limit_is_still_accepted(client, auth):
+    """The cap refuses what is over it, and nothing under it."""
+    from linkling.server.app import _MAX_TARGET_LENGTH
+
+    prefix = "https://example.com/"
+    exact = prefix + "a" * (_MAX_TARGET_LENGTH - len(prefix))
+    assert len(exact) == _MAX_TARGET_LENGTH
+
+    accepted = client.post(
+        "/-/api/links", json={"url": exact, "name": "at-the-limit"}, headers=auth
+    )
+    assert accepted.status_code == 201, accepted.text
+    assert client.get("/at-the-limit").headers["location"] == exact
+
+    refused = client.post(
+        "/-/api/links", json={"url": exact + "a", "name": "over-the-limit"}, headers=auth
+    )
+    assert refused.status_code == 422, refused.status_code
 
 
 def test_created_by_rejects_control_characters(client, auth, target):

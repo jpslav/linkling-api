@@ -130,7 +130,9 @@ def migrate(conn: sqlite3.Connection, directory: Path | None = None) -> list[int
     if unknown:
         raise MigrationError(
             f"the database records migrations this build does not have: {sorted(unknown)} "
-            "-- it was migrated by a newer version of the service"
+            "-- it was migrated by a newer version of the service. Deploy that version "
+            "again, or take a backup and roll the schema back deliberately; this build "
+            "will not serve links against a schema it does not know."
         )
     applied: list[int] = []
     for version, path in migrations:

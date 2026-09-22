@@ -43,12 +43,14 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
             f"{API_KEY_ENV} is not set. The service refuses to start without a team key: "
             "an empty key would accept any request carrying an empty bearer token."
         )
-    if not api_key.isascii():
-        # An HTTP header value cannot carry it: httpx refuses to encode one, and a key
-        # no client can send is a service that refuses every write while looking healthy.
+    if not api_key.isascii() or not api_key.isprintable():
+        # A key an ordinary client cannot put in a header is a service that refuses every
+        # write while looking perfectly healthy. Two ways in: httpx will not encode a
+        # non-ASCII header value at all, and an embedded CR or LF makes h11 refuse to
+        # build the header (`LocalProtocolError`). Both are startup failures here.
         raise ConfigError(
-            f"{API_KEY_ENV} must be ASCII -- it is sent in an HTTP header, and a "
-            "non-ASCII key cannot be put in one by an ordinary client."
+            f"{API_KEY_ENV} must be printable ASCII -- it is sent in an HTTP header, and "
+            "neither a non-ASCII character nor a control character can go in one."
         )
 
     db_path = (source.get(DB_ENV) or "").strip()
