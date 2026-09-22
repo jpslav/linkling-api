@@ -4,3 +4,8 @@ __pycache__/
 *.egg-info/
 .venv/
 .venv-*/
+
+# Linked git worktrees an agent session made for itself: checkouts of this
+# same repo, not its content. Untracked, they also stop tools/sync-repos.sh
+# fast-forwarding this checkout, because the tree reads as dirty.
+.claude/worktrees/
