@@ -1,8 +1,8 @@
 # ADR-0005 — The data model, and what deletion does to a name
 
-- Status: Proposed
-- Approver: (pending)
-- Date: 2026-09-17
+- Status: Accepted
+- Approver: @jpslav
+- Date: 2026-09-22
 
 ## Context
 
@@ -70,3 +70,9 @@ name, answers 410, and is removed only by an explicit delete.
 **What would settle the tuning question:** with WAL on, how many redirects per second does
 one worker sustain on the target machine with the synchronous increment? If it is in the
 thousands, the asynchronous option is never needed and should not be built.
+
+## Decision record
+
+Accepted 2026-09-22 by @jpslav, from line comments on [the definition PR](https://github.com/jpslav/tinyworks-program/pull/1). Written by `tools/decision-record.py`; each answer is also in its question file.
+
+- **Can the name of a deleted link ever be used again?** — **A.** Never — a deleted name is reserved forever and generated names are never re-issued; next year's is `q3-plan-2027` — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074335893)) <!-- decided: 2026-09-17-tenancy-and-name-reuse/name-reuse: A -->

@@ -1,8 +1,8 @@
 # ADR-0004 — What is stored about a click, and where it can leak
 
-- Status: Proposed
-- Approver: (pending)
-- Date: 2026-09-17
+- Status: Accepted
+- Approver: @jpslav
+- Date: 2026-09-22
 
 ## Context
 
@@ -78,3 +78,12 @@ changes the number the team reads, so it is a question rather than a decision.
 - Retention is genuinely open and the page must state it (`#L35-L36`) — proposed: counts are
   deleted with their link and otherwise kept, which is the simplest true sentence and makes
   the tombstone of ADR-0005 carry no counts.
+
+## Decision record
+
+Accepted 2026-09-22 by @jpslav, from line comments on [the definition PR](https://github.com/jpslav/tinyworks-program/pull/1). Written by `tools/decision-record.py`; each answer is also in its question file.
+
+- **What is stored about a click?** — **A.** A number per link per day, and nothing else — nothing finer than a day can ever be reconstructed — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074333903)) <!-- decided: 2026-09-17-click-record-and-retention/stored: A -->
+- **How long are the counts kept?** — **A.** Until their link is deleted, and otherwise indefinitely — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074334026)) <!-- decided: 2026-09-17-click-record-and-retention/retention: A -->
+- **Which timezone decides where one day's count ends?** — **A.** UTC — never needs re-bucketing; the team's "yesterday" is slightly offset from its own — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074334128)) <!-- decided: 2026-09-17-click-record-and-retention/day-boundary: A -->
+- **Are automated link previews counted as uses?** — **A.** Count every request that follows a link, inspect nothing, and say so plainly on the privacy page — @jpslav, 2026-09-22: "Accepting the recommendation." ([comment](https://github.com/jpslav/tinyworks-program/pull/1#discussion_r4074334241)) <!-- decided: 2026-09-17-click-record-and-retention/previews: A -->
