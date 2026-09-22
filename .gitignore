@@ -9,3 +9,11 @@ __pycache__/
 # same repo, not its content. Untracked, they also stop tools/sync-repos.sh
 # fast-forwarding this checkout, because the tree reads as dirty.
 .claude/worktrees/
+
+# A dispatched worker's own checklist, and the SQLite database the service
+# writes when you run it locally (`LINKLING_DB`, README "Run it locally").
+.goal
+data/
+*.db
+*.db-wal
+*.db-shm
