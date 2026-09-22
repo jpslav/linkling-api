@@ -56,6 +56,17 @@ UNKNOWN_STATUS = 404
 _ALLOWED_TARGET_SCHEMES = ("http", "https")
 _MAX_CREATED_BY = 256
 
+#: A target longer than this is refused. Without a cap, a 1 MB URL is accepted, stored,
+#: and then unfollowable: the `Location` header exceeds what clients and proxies accept
+#: (nginx buffers upstream headers at 4-8 KB), so the link "succeeds" and 502s forever
+#: after. 8 KiB is far above any real tracking URL, and widening it later is additive.
+_MAX_TARGET_LENGTH = 8192
+
+#: The largest request body the service will read. The key check cannot run before this:
+#: FastAPI parses the body while solving the route, so an unauthenticated caller would
+#: otherwise make the process buffer a body of any size before being told 401.
+_MAX_BODY_BYTES = 64 * 1024
+
 
 class NoStoreMiddleware:
     """Put ``Cache-Control: no-store`` on every response, whoever produced it."""
@@ -76,6 +87,72 @@ class NoStoreMiddleware:
         await self.app(scope, receive, send_with_no_store)
 
 
+class BodyLimitMiddleware:
+    """Refuse an over-large request body before anything reads it.
+
+    `Content-Length` is checked first because that is the case that can be refused
+    without reading a byte; a chunked body with no length is counted as it arrives and
+    cut off at the same ceiling.
+    """
+
+    def __init__(self, app, max_bytes: int = _MAX_BODY_BYTES):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        declared = _content_length(scope)
+        if declared is not None and declared > self.max_bytes:
+            await _too_large(send, self.max_bytes)
+            return
+
+        received = 0
+
+        async def receive_counting():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    # A chunked body with no declared length. Cut it off rather than
+                    # keep buffering; the handler then sees a truncated body and answers
+                    # 422. Not as clear as the 413 above, but it is bounded, and a
+                    # disconnect here would surface as a 500.
+                    return {"type": "http.request", "body": b"", "more_body": False}
+            return message
+
+        await self.app(scope, receive_counting, send)
+
+
+def _content_length(scope) -> int | None:
+    for key, value in scope.get("headers", []):
+        if key == b"content-length":
+            try:
+                return int(value)
+            except ValueError:
+                return None
+    return None
+
+
+async def _too_large(send, limit: int) -> None:
+    body = f'{{"detail":"Request body larger than {limit} bytes."}}'.encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+                (b"cache-control", b"no-store"),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
 class CreateLink(BaseModel):
     """The create request.
 
@@ -94,12 +171,20 @@ class CreateLink(BaseModel):
 def _validate_target(raw: str) -> str:
     if not raw:
         raise HTTPException(422, "url is required.")
+    if len(raw) > _MAX_TARGET_LENGTH:
+        raise HTTPException(422, f"url must be at most {_MAX_TARGET_LENGTH} characters.")
     if any(character < "\x21" or character > "\x7e" for character in raw):
         raise HTTPException(
             422,
             "url must be printable ASCII with no spaces; percent-encode anything else.",
         )
-    parts = urlsplit(raw)
+    try:
+        parts = urlsplit(raw)
+    except ValueError as exc:
+        # `urlsplit` raises on a malformed IPv6 host (`http://[`), which the printable-
+        # ASCII check above does not catch. Uncaught it is a 500 on a call that is simply
+        # wrong, and the caller cannot tell the two apart.
+        raise HTTPException(422, f"url could not be parsed: {exc}") from exc
     if parts.scheme not in _ALLOWED_TARGET_SCHEMES:
         raise HTTPException(422, "url must be an absolute http:// or https:// URL.")
     if not parts.netloc:
@@ -112,6 +197,10 @@ def _validate_created_by(raw: str | None) -> str | None:
         return None
     if len(raw) > _MAX_CREATED_BY:
         raise HTTPException(422, f"created_by must be at most {_MAX_CREATED_BY} characters.")
+    if any(character < " " or character == "\x7f" for character in raw):
+        # Nothing renders this yet; the stats page (LL-016) and the CLI (LL-003) will,
+        # and a stored `\r\n` is theirs to discover. Refusing it now is additive-safe.
+        raise HTTPException(422, "created_by must not contain control characters.")
     return raw
 
 
@@ -134,9 +223,15 @@ def create_app(config: Config | None = None) -> FastAPI:
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        # Off, because Starlette's slash redirect is a second hop built from the `Host`
+        # header: `/q3-plan//` answered `307 Location: http://<whatever Host said>/q3-plan`.
+        # The `/{name}/` route below is what ADR-0001e's "treated as" means; every other
+        # spelling is simply not a link.
+        redirect_slashes=False,
     )
     app.state.config = settings
     app.add_middleware(NoStoreMiddleware)
+    app.add_middleware(BodyLimitMiddleware)
 
     def get_conn(request: Request) -> Iterator[sqlite3.Connection]:
         conn = db.connect(request.app.state.config.db_path)
@@ -166,7 +261,12 @@ def create_app(config: Config | None = None) -> FastAPI:
         if scheme.lower() != "bearer":
             raise unauthorised
         expected = request.app.state.config.api_key
-        if not hmac.compare_digest(token.strip(), expected):
+        # Compared as bytes: `hmac.compare_digest` on `str` raises TypeError for any
+        # non-ASCII character, and Starlette decodes header bytes as latin-1 -- so a
+        # token carrying one byte >= 0x80 turned an unauthenticated 401 into a 500.
+        if not hmac.compare_digest(
+            token.strip().encode("utf-8"), expected.encode("utf-8")
+        ):
             raise unauthorised
 
     # NOTE: the connection is taken as `= Depends(get_conn)` rather than through an

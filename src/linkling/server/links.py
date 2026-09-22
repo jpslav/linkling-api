@@ -121,13 +121,17 @@ def lookup(conn: sqlite3.Connection, name: str) -> Link | None:
 
 def delete(conn: sqlite3.Connection, name: str) -> None:
     """Tombstone the link: drop its target and maker, keep its name reserved forever."""
-    link = lookup(conn, name)
-    if link is None:
-        raise NameUnknown(name)
-    if link.deleted:
-        raise NameDeleted(name)
-    conn.execute(
+    cursor = conn.execute(
         "UPDATE links SET target = '', created_by = NULL, deleted_at = ? "
         "WHERE name = ? AND deleted_at IS NULL",
         (_now(), name),
     )
+    if cursor.rowcount == 1:
+        return
+    # The UPDATE is what decides, so two callers racing on one name cannot both be told
+    # they deleted it: the loser's rowcount is 0 and it reads the row to say which "no"
+    # this is. Looking first and updating second would hand 204 to everybody in the race.
+    link = lookup(conn, name)
+    if link is None:
+        raise NameUnknown(name)
+    raise NameDeleted(name)

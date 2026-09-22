@@ -49,8 +49,18 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 
     ``isolation_level=None`` turns off Python's implicit transaction handling so the
     transactions in this module are the only ones, and are visible in the SQL.
+
+    ``check_same_thread=False`` is required, not a loosening. FastAPI runs a sync
+    dependency's setup, the handler and its teardown as three separate threadpool
+    submissions, and anyio hands each to whichever worker is free -- so the thread that
+    opens the connection is usually *not* the thread that uses it. Sequential traffic
+    hides this completely (the pool reuses one worker), which is why a green suite said
+    nothing: with two concurrent clients, 161 of 200 follows answered 500 with
+    ``sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in
+    that same thread``. Each connection here is still owned by exactly one request from
+    open to close, which is the property the thread check exists to protect.
     """
-    conn = sqlite3.connect(str(db_path), isolation_level=None)
+    conn = sqlite3.connect(str(db_path), isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")  # tuning, not a door -- ADR-0005 Consequences
     conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
@@ -92,19 +102,39 @@ def discover_migrations(directory: Path | None = None) -> list[tuple[int, Path]]
     return [(version, found[version]) for version in sorted(found)]
 
 
+def applied_versions(conn: sqlite3.Connection) -> set[int]:
+    """Every migration number this database has recorded as applied.
+
+    The *set*, not the maximum. Tracking only the highest number is how a migration goes
+    missing without a word: two branches add `0002` and `0003`, the higher one deploys
+    first, and `0002` is then "already done" everywhere -- `migrate` returns the same
+    empty list it returns when there is genuinely nothing to do, and the missing table
+    surfaces later as a request-time error.
+    """
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_version(version INTEGER)")
+    rows = conn.execute("SELECT version FROM schema_version").fetchall()
+    return {int(row["version"]) for row in rows if row["version"] is not None}
+
+
 def current_version(conn: sqlite3.Connection) -> int:
     """The highest applied migration number, or 0 on a database with none."""
-    conn.execute("CREATE TABLE IF NOT EXISTS schema_version(version INTEGER)")
-    row = conn.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
-    return 0 if row is None or row["v"] is None else int(row["v"])
+    versions = applied_versions(conn)
+    return max(versions) if versions else 0
 
 
 def migrate(conn: sqlite3.Connection, directory: Path | None = None) -> list[int]:
     """Apply every migration newer than the database's version. Returns what it applied."""
     migrations = discover_migrations(directory)
+    already = applied_versions(conn)
+    unknown = already - {version for version, _ in migrations}
+    if unknown:
+        raise MigrationError(
+            f"the database records migrations this build does not have: {sorted(unknown)} "
+            "-- it was migrated by a newer version of the service"
+        )
     applied: list[int] = []
     for version, path in migrations:
-        if version <= current_version(conn):
+        if version in already:
             continue
         sql = path.read_text(encoding="utf-8")
         script = (

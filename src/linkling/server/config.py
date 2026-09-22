@@ -43,6 +43,13 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
             f"{API_KEY_ENV} is not set. The service refuses to start without a team key: "
             "an empty key would accept any request carrying an empty bearer token."
         )
+    if not api_key.isascii():
+        # An HTTP header value cannot carry it: httpx refuses to encode one, and a key
+        # no client can send is a service that refuses every write while looking healthy.
+        raise ConfigError(
+            f"{API_KEY_ENV} must be ASCII -- it is sent in an HTTP header, and a "
+            "non-ASCII key cannot be put in one by an ordinary client."
+        )
 
     db_path = (source.get(DB_ENV) or "").strip()
     if not db_path:

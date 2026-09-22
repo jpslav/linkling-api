@@ -148,6 +148,52 @@ def test_a_second_run_applies_nothing(tmp_path):
         second.close()
 
 
+def test_a_migration_numbered_below_the_current_version_is_still_applied(tmp_path):
+    """The runner tracks the set of applied versions, not the highest one.
+
+    Two branches adding `0002` and `0003` is the ordinary way this happens: if the higher
+    number deploys first, a runner keyed on `MAX(version)` reports "nothing to do" for the
+    lower one forever, and the missing table turns up as a request-time error.
+    """
+    directory = tmp_path / "migrations"
+    directory.mkdir()
+    _write(directory, "0001_first.sql", "CREATE TABLE a(x INTEGER);")
+    _write(directory, "0003_third.sql", "CREATE TABLE c(x INTEGER);")
+
+    database = tmp_path / "gap.db"
+    first = db.connect(database)
+    try:
+        assert db.migrate(first, directory) == [1, 3]
+    finally:
+        first.close()
+
+    _write(directory, "0002_second.sql", "CREATE TABLE b(x INTEGER);")
+    second = db.connect(database)
+    try:
+        assert db.migrate(second, directory) == [2], "0002 was silently skipped"
+        tables = {row[0] for row in second.execute("SELECT name FROM sqlite_master")}
+        assert {"a", "b", "c"} <= tables, tables
+        assert db.applied_versions(second) == {1, 2, 3}
+    finally:
+        second.close()
+
+
+def test_a_database_migrated_by_a_newer_build_refuses_to_start(tmp_path):
+    """Recorded version 9 with no 0009 file is a downgrade, and downgrades say so."""
+    directory = tmp_path / "migrations"
+    directory.mkdir()
+    _write(directory, "0001_first.sql", "CREATE TABLE a(x INTEGER);")
+
+    conn = db.connect(tmp_path / "newer.db")
+    try:
+        assert db.migrate(conn, directory) == [1]
+        conn.execute("INSERT INTO schema_version(version) VALUES (9)")
+        with pytest.raises(db.MigrationError, match="newer version"):
+            db.migrate(conn, directory)
+    finally:
+        conn.close()
+
+
 def test_an_empty_migrations_directory_raises_rather_than_reporting_success(tmp_path):
     directory = tmp_path / "migrations"
     directory.mkdir()
