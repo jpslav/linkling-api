@@ -20,8 +20,10 @@ are not here yet.
 | `DELETE /-/api/links/<name>` | `204`. Needs the team key. A deleted name stays reserved forever. |
 | `GET\|HEAD /<name>` | `302` to the long URL with `Cache-Control: no-store`. No credential, no cookie. |
 
-Unknown names answer `404`, deleted ones `410`, and every response carries
-`Cache-Control: no-store` — the decisions are in `docs/adr/0001`, `0003`, `0005` and `0006`.
+Unknown names answer `404`, deleted ones `410`, and every response the application
+produces carries `Cache-Control: no-store` — a 500 from the framework's own error handler
+is the one exception, and 500 is not a cacheable status. The decisions are in
+`docs/adr/0001`, `0003`, `0005` and `0006`.
 
 ## Run it locally
 

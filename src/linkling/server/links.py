@@ -12,10 +12,10 @@ What a tombstone keeps is a privacy promise as well as a naming one: ADR-0005 sa
 tombstone "stores only a name and a date", and ADR-0008c names "a tombstone dropping its
 target" as behaviour a retention test asserts. ADR-0005's own DDL declares
 ``target TEXT NOT NULL``, so the dropped target is written as the empty string -- the only
-reading under which both of those sentences are true at once. This is flagged in the
-LL-001 report as a question for the owner: if the column should be nullable instead, that
-is a change to an unreleased migration today and a table rebuild after the first
-deployment.
+reading under which both of those sentences are true at once. It is raised as an open
+question for the owner in this item's plan (the `PLAN:` comment on jpslav/linkling-api#2,
+§3a) and in its report: if the column should be nullable instead, that is a change to an
+unreleased migration today and a table rebuild after the first deployment.
 """
 
 from __future__ import annotations

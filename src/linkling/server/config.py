@@ -45,12 +45,15 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         )
     if not api_key.isascii() or not api_key.isprintable():
         # A key an ordinary client cannot put in a header is a service that refuses every
-        # write while looking perfectly healthy. Two ways in: httpx will not encode a
-        # non-ASCII header value at all, and an embedded CR or LF makes h11 refuse to
-        # build the header (`LocalProtocolError`). Both are startup failures here.
+        # write while looking perfectly healthy. Two ways in, both measured: httpx raises
+        # `UnicodeEncodeError` rather than send a non-ASCII header value, and an embedded
+        # CR or LF makes h11 refuse to build the header (`LocalProtocolError`). The check
+        # is `isprintable()`, which is stricter than the wire strictly requires -- h11
+        # will carry `\x01` and `\x7f` -- because a key containing one of those is a
+        # configuration accident either way, and narrowing here costs nothing.
         raise ConfigError(
             f"{API_KEY_ENV} must be printable ASCII -- it is sent in an HTTP header, and "
-            "neither a non-ASCII character nor a control character can go in one."
+            "a non-ASCII character or a newline in one stops every client from sending it."
         )
 
     db_path = (source.get(DB_ENV) or "").strip()

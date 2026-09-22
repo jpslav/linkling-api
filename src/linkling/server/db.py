@@ -22,15 +22,18 @@ left open by SQLite, so the runner rolls it back and re-raises -- verified by ru
 not by reading the documentation.
 
 Two processes migrating the same fresh database at once are serialised by
-``BEGIN IMMEDIATE``; the loser then tries to apply a migration that is already there and
-fails loudly at startup rather than half-applying one. That is the intended outcome for a
-single-worker service: noisy, not clever.
+``BEGIN IMMEDIATE``, and the loser reads ``schema_version`` inside its own transaction and
+finds the work already done: measured as ``applied [1]`` in one and ``applied []`` in the
+other, with neither raising. An earlier version of this paragraph said the loser "fails
+loudly at startup"; running it is what showed otherwise, and the run also turned up a real
+defect in ``connect`` -- see ``_enable_wal``.
 """
 
 from __future__ import annotations
 
 import re
 import sqlite3
+import time
 from pathlib import Path
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
@@ -38,6 +41,10 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 _MIGRATION_FILENAME = re.compile(r"(\d{4})_[a-z0-9_]+\.sql\Z")
 
 _BUSY_TIMEOUT_MS = 5000
+
+#: How hard to try to put the database into WAL before serving the request anyway.
+_WAL_ATTEMPTS = 20
+_WAL_RETRY_SECONDS = 0.05
 
 
 class MigrationError(RuntimeError):
@@ -62,10 +69,35 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     """
     conn = sqlite3.connect(str(db_path), isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")  # tuning, not a door -- ADR-0005 Consequences
     conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
     conn.execute("PRAGMA foreign_keys=ON")
+    _enable_wal(conn)
     return conn
+
+
+def _enable_wal(conn: sqlite3.Connection) -> bool:
+    """Ask for WAL, retry briefly, and carry on without it rather than fail a request.
+
+    Switching a database into WAL takes a lock that SQLite's busy handler does **not**
+    cover, so `busy_timeout` does not help and the ordering of the two pragmas makes no
+    difference -- both were measured. Two connections opening at the same moment on a
+    fresh file left one raising `sqlite3.OperationalError: database is locked` from
+    inside `connect`, which on the redirect path is a 500 for a link that exists.
+
+    ADR-0005 calls WAL "a tuning choice, not a door", and this is what taking that
+    seriously looks like: the journal mode is a property of the file, the first
+    connection to win sets it for everyone, and a connection that loses the race serves
+    the request in the mode the file already has.
+    """
+    for attempt in range(_WAL_ATTEMPTS):
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return True
+        except sqlite3.OperationalError:
+            if attempt == _WAL_ATTEMPTS - 1:
+                return False
+            time.sleep(_WAL_RETRY_SECONDS)
+    return False
 
 
 def discover_migrations(directory: Path | None = None) -> list[tuple[int, Path]]:
@@ -117,7 +149,11 @@ def applied_versions(conn: sqlite3.Connection) -> set[int]:
 
 
 def current_version(conn: sqlite3.Connection) -> int:
-    """The highest applied migration number, or 0 on a database with none."""
+    """The highest number in ``applied_versions``, or 0 on a database with none.
+
+    Reporting only. ``migrate`` decides from the whole set, because the highest number
+    is exactly what cannot tell a gap from a finished sequence.
+    """
     versions = applied_versions(conn)
     return max(versions) if versions else 0
 

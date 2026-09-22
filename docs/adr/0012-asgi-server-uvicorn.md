@@ -30,11 +30,13 @@ with its access log off.**
 | C. granian | Fewer eyes on it, a Rust build in the image | Nothing | R2 — a compiled dependency to keep building |
 | D. Declare no server; leave it to the image (LL-005) | The package cannot be run or tested as shipped, and the one test that proves the redirect over a real socket would have nothing to run | The service being runnable from a checkout | R1 |
 
-**Recommend A.** It is what ADR-0004c already read and assumed, it is the most exercised
-server in this stack, and nothing in the service imports it: it appears in
-`pyproject.toml`, in `README.md`'s run command, and in the single test that runs the app on
-a loopback port to count redirect hops. D is rejected because it would make the repository's
-own tests unable to prove the HTTP half of LL-014.
+**Recommend A.** It is what ADR-0004c already read and assumed, and it is the most
+exercised server in this stack. Nothing under `src/` imports it — the application is
+plain ASGI — so it appears only in `pyproject.toml`, in `README.md`'s run command, and in
+the tests: `tests/conftest.py` imports it for the `live_base_url` fixture, which
+`tests/test_live_server_over_http.py` and `tests/test_live_server_concurrency.py` use to
+run the app on a loopback port. D is rejected because it would leave the repository's own
+tests unable to prove the HTTP half of LL-014.
 
 **The access log is part of this decision, not a deployment detail.** Run without
 `--no-access-log` (or an equivalent format carrying no `client_addr`), the service writes

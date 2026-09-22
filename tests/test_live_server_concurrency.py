@@ -6,8 +6,10 @@ setup, the handler and its teardown as three separate threadpool submissions, an
 gives each to whichever worker is free. Sequentially that is always the same worker, so a
 SQLite connection opened with the default ``check_same_thread=True`` never noticed.
 Concurrently the handler runs on a different worker and sqlite3 raises
-``ProgrammingError``. Measured against the shipped entry point before the fix: **161 of
-200 concurrent follows answered 500**.
+``ProgrammingError``. Measured against the shipped entry point before the fix, on one
+machine: **161 of 200 concurrent follows answered 500**, and 172 of 200 on a second run.
+The exact count is load- and machine-dependent; what is not is that it is nowhere near
+zero.
 
 A green suite said nothing about that, which is the argument for this file existing
 rather than for one more sequential assertion.

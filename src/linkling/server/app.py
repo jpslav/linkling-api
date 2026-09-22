@@ -19,11 +19,16 @@ Three things here look like configuration and are not:
   trailing slash with a 307 to the bare name -- a second hop, carrying no ``no-store`` --
   where ADR-0001e says ``/<name>/`` *is* ``/<name>`` and R-005 asks for exactly one hop.
 
-Every response leaves through ``NoStoreMiddleware``. ADR-0003 settles ``302`` for a
-follow, ``410`` for a deleted link and ``404`` for an unknown name, each with
-``Cache-Control: no-store``; but 404 and 405 are heuristically cacheable per RFC 9110 and
-the ones Starlette's router generates never reach a handler of ours. Setting the header in
-one place is what stops a cached "gone" outliving the deletion that caused it.
+Every response the application produces leaves through ``NoStoreMiddleware``. ADR-0003
+settles ``302`` for a follow, ``410`` for a deleted link and ``404`` for an unknown name,
+each with ``Cache-Control: no-store``; but 404 and 405 are heuristically cacheable per RFC
+9110 and the ones Starlette's router generates never reach a handler of ours. Setting the
+header in one place is what stops a cached "gone" outliving the deletion that caused it.
+
+**One response does not pass through it**, and it is stated here rather than implied: a
+500 from ``ServerErrorMiddleware``, which Starlette places outside every middleware added
+here, carries no ``Cache-Control`` at all. That is tolerable only because 500 is not in
+RFC 9110's heuristically cacheable set; it is not a guarantee this module makes.
 """
 
 from __future__ import annotations
@@ -60,9 +65,10 @@ _MAX_CREATED_BY = 256
 #: and then unfollowable: the `Location` header exceeds what clients and proxies will
 #: carry, so the link "succeeds" and 502s for everyone who follows it -- with its name
 #: reserved forever, because deletion does not free a name. The number has to sit *below*
-#: the smallest buffer in the path to do its job: nginx's default `proxy_buffer_size` is
-#: 4 KB, so 2 KiB leaves room for the rest of the response head. It is far above any real
-#: tracking URL, and widening it later is additive.
+#: the smallest header buffer in the path to do its job, and the common one is nginx's
+#: `proxy_buffer_size`, documented as defaulting to one memory page -- 4 or 8 KB depending
+#: on the platform. 2 KiB leaves room for the rest of the response head under either, and
+#: is still far above any real tracking URL. Widening it later is additive.
 _MAX_TARGET_LENGTH = 2048
 
 #: The largest request body the service will read. The key check cannot run before this:
@@ -72,7 +78,11 @@ _MAX_BODY_BYTES = 64 * 1024
 
 
 class NoStoreMiddleware:
-    """Put ``Cache-Control: no-store`` on every response, whoever produced it."""
+    """Put ``Cache-Control: no-store`` on every response that passes through it.
+
+    That is every response but one: Starlette puts ``ServerErrorMiddleware`` outside the
+    middleware an application adds, so a 500 it generates does not come through here.
+    """
 
     def __init__(self, app):
         self.app = app
@@ -266,9 +276,11 @@ def create_app(config: Config | None = None) -> FastAPI:
     ) -> None:
         """ADR-0006a: one team key, ``Authorization: Bearer <key>``.
 
-        Compared with ``hmac.compare_digest`` so a wrong key cannot be found one character
-        at a time. Following a link does not depend on this and never will: R-011 and R-012
-        are only meaningful together.
+        Compared with ``hmac.compare_digest``, which does not return early on the first
+        differing byte -- so the *content* of a wrong key cannot be found one byte at a
+        time. It does not hide the key's length, and nothing here claims to. Following a
+        link does not depend on this and never will: R-011 and R-012 are only meaningful
+        together.
         """
         unauthorised = HTTPException(
             401,

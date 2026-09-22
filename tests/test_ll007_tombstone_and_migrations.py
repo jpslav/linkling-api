@@ -98,6 +98,42 @@ def _write(directory, name, sql):
     (directory / name).write_text(sql, encoding="utf-8")
 
 
+def test_connecting_while_another_writer_holds_the_lock_still_succeeds(tmp_path):
+    """Putting a database into WAL takes a lock SQLite's busy handler does not cover.
+
+    Every request opens its own connection, so a connection that raises here is a 500 on
+    a link that exists. This holds the lock deliberately rather than racing for it: a
+    two-thread version of this test passed against the broken code about as often as not,
+    which is the same defect as no test at all.
+    """
+    database = tmp_path / "locked.db"
+    sqlite3.connect(database).execute("CREATE TABLE placeholder(x)")  # a delete-mode file
+
+    holder = sqlite3.connect(database, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    holder.execute("INSERT INTO placeholder VALUES (1)")
+    try:
+        conn = db.connect(database)  # must not raise, WAL or no WAL
+        try:
+            mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            assert mode in {"delete", "wal"}, mode
+            assert conn.execute("SELECT 1").fetchone()[0] == 1
+        finally:
+            conn.close()
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+
+
+def test_the_journal_mode_is_wal_when_nothing_is_in_the_way(tmp_path):
+    """The tolerance above must not have quietly turned WAL off for everybody."""
+    conn = db.connect(tmp_path / "plain.db")
+    try:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    finally:
+        conn.close()
+
+
 def test_the_shipped_migrations_are_a_non_empty_numbered_sequence():
     """Zero shipped migrations is a failure, not a goal: this population is fixed."""
     found = db.discover_migrations()
