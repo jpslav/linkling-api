@@ -211,9 +211,16 @@ def _validate_target(raw: str) -> str:
     return raw
 
 
-def _validate_expires(raw: str | None) -> str | None:
+def _validate_expires(raw: str | None, now: str) -> str | None:
     """ADR-0013: `expires` must be an ISO-8601 UTC timestamp in `links.TIMESTAMP_FORMAT`,
-    strictly after the moment of the call.
+    strictly after ``now``.
+
+    ``now`` is passed in rather than read here with `links._now()`, and the caller reads
+    it exactly once per request and reuses it for the row's `created_at` too: two separate
+    reads let a clock tick land between them, so an `expires` one second out could pass
+    this check against the first read and still land at or before `created_at` from a
+    second read moments later -- a link `410` from its first follow, with its name
+    reserved forever.
 
     Parsed with `strptime` rather than `datetime.fromisoformat`: `fromisoformat` accepts
     shapes `TIMESTAMP_FORMAT` does not print (no seconds, a numeric offset, no `Z` at all).
@@ -227,10 +234,6 @@ def _validate_expires(raw: str | None) -> str | None:
     despite naming the 5th, because a space sorts below every digit. Round-tripping the
     parsed value back through `strftime` and requiring it to reproduce the input catches
     every one of those, because `strftime` only ever emits the one canonical shape.
-
-    Rejecting an already-past instant is separate from the shape check: without it, a typo'd
-    year creates a link that is `410` from its very first follow, with its name reserved
-    forever exactly as ADR-0005 reserves one after any other mistaken create.
     """
     if raw is None:
         return None
@@ -248,7 +251,7 @@ def _validate_expires(raw: str | None) -> str | None:
             "expires must be an ISO-8601 UTC timestamp shaped like "
             "2026-01-01T00:00:00Z.",
         )
-    if raw <= links._now():
+    if raw <= now:
         raise HTTPException(422, "expires must be in the future.")
     return raw
 
@@ -359,14 +362,22 @@ def create_app(config: Config | None = None) -> FastAPI:
     def create_link(
         body: CreateLink, conn: sqlite3.Connection = Depends(get_conn)
     ) -> dict[str, str]:
+        # Read once and reuse for `created_at`: two separate reads of the clock would let
+        # a tick land between the "is this still in the future" check and the row's own
+        # timestamp, which is exactly the race `_validate_expires`'s docstring names.
+        now = links._now()
         target = _validate_target(body.url)
         created_by = _validate_created_by(body.created_by)
-        expires_at = _validate_expires(body.expires)
+        expires_at = _validate_expires(body.expires, now)
 
         if body.name is None:
             try:
                 link = links.create_generated(
-                    conn, target=target, created_by=created_by, expires_at=expires_at
+                    conn,
+                    target=target,
+                    created_by=created_by,
+                    expires_at=expires_at,
+                    created_at=now,
                 )
             except links.GenerationExhausted as exc:
                 raise HTTPException(503, str(exc)) from exc
@@ -385,6 +396,7 @@ def create_app(config: Config | None = None) -> FastAPI:
                     target=target,
                     created_by=created_by,
                     expires_at=expires_at,
+                    created_at=now,
                 )
             except links.NameTaken as exc:
                 raise HTTPException(

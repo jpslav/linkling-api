@@ -193,6 +193,35 @@ def test_expires_in_the_past_is_refused_rather_than_creating_a_dead_on_arrival_l
     assert at_the_boundary.status_code == 422, at_the_boundary.text
 
 
+def test_the_clock_is_read_once_per_create_so_expires_and_created_at_cannot_disagree(
+    client, auth, target, monkeypatch, db_path
+):
+    """Round 2 finding: validating `expires` is still in the future and stamping
+    `created_at` used to read the clock separately, so a tick landing between the two
+    reads could make an `expires` chosen one second out land at or before `created_at`.
+    Reading the clock once per request and reusing it removes the race by construction;
+    this pins that there is exactly one read, by making a second one answer differently.
+    """
+    answers = iter(
+        ["2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", "2026-01-01T00:00:02Z"]
+    )
+    monkeypatch.setattr(links_module, "_now", lambda: next(answers))
+
+    created = client.post(
+        "/-/api/links",
+        json={"url": target, "name": "q3-plan", "expires": "2026-01-01T00:00:01Z"},
+        headers=auth,
+    )
+    assert created.status_code == 201, created.text
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT created_at, expires_at FROM links WHERE name = 'q3-plan'"
+        ).fetchone()
+    assert row[0] == "2026-01-01T00:00:00Z", "created_at read the clock a second time"
+    assert row[1] == "2026-01-01T00:00:01Z"
+
+
 def test_a_tombstoned_links_expiry_is_left_as_it_was(
     client, auth, make_link, monkeypatch, db_path
 ):

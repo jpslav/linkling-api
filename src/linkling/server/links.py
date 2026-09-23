@@ -74,13 +74,23 @@ def create(
     target: str,
     created_by: str | None = None,
     expires_at: str | None = None,
+    created_at: str | None = None,
 ) -> Link:
-    """Create a link under a name the caller chose. Raises NameTaken."""
+    """Create a link under a name the caller chose. Raises NameTaken.
+
+    ``created_at`` defaults to ``_now()`` here, but a caller that already read the clock
+    for another reason -- ``app.py`` reads it once to check ``expires`` is still in the
+    future -- should pass that same value through rather than let this call read it again.
+    Two separate reads let a second tick land between them: an `expires` a caller chose to
+    be one second in the future could pass validation against the first read and still be
+    equal to, or earlier than, `created_at` from the second, landing already-expired.
+    """
+    when = _now() if created_at is None else created_at
     try:
         conn.execute(
             "INSERT INTO links(name, target, created_at, created_by, expires_at) "
             "VALUES (?, ?, ?, ?, ?)",
-            (name, target, _now(), created_by, expires_at),
+            (name, target, when, created_by, expires_at),
         )
     except sqlite3.IntegrityError as exc:
         raise NameTaken(name) from exc
@@ -93,6 +103,7 @@ def create_generated(
     target: str,
     created_by: str | None = None,
     expires_at: str | None = None,
+    created_at: str | None = None,
     generate: Callable[[], str] | None = None,
     attempts: int = GENERATE_ATTEMPTS,
 ) -> Link:
@@ -115,6 +126,7 @@ def create_generated(
                 target=target,
                 created_by=created_by,
                 expires_at=expires_at,
+                created_at=created_at,
             )
         except NameTaken:
             continue
