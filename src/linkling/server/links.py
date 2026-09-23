@@ -54,6 +54,7 @@ class Link:
     name: str
     target: str
     deleted: bool
+    expired: bool
 
 
 def _now() -> str:
@@ -66,16 +67,18 @@ def create(
     name: str,
     target: str,
     created_by: str | None = None,
+    expires_at: str | None = None,
 ) -> Link:
     """Create a link under a name the caller chose. Raises NameTaken."""
     try:
         conn.execute(
-            "INSERT INTO links(name, target, created_at, created_by) VALUES (?, ?, ?, ?)",
-            (name, target, _now(), created_by),
+            "INSERT INTO links(name, target, created_at, created_by, expires_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (name, target, _now(), created_by, expires_at),
         )
     except sqlite3.IntegrityError as exc:
         raise NameTaken(name) from exc
-    return Link(name=name, target=target, deleted=False)
+    return Link(name=name, target=target, deleted=False, expired=False)
 
 
 def create_generated(
@@ -83,6 +86,7 @@ def create_generated(
     *,
     target: str,
     created_by: str | None = None,
+    expires_at: str | None = None,
     generate: Callable[[], str] | None = None,
     attempts: int = GENERATE_ATTEMPTS,
 ) -> Link:
@@ -99,7 +103,13 @@ def create_generated(
     for _ in range(attempts):
         candidate = make_name()
         try:
-            return create(conn, name=candidate, target=target, created_by=created_by)
+            return create(
+                conn,
+                name=candidate,
+                target=target,
+                created_by=created_by,
+                expires_at=expires_at,
+            )
         except NameTaken:
             continue
     raise GenerationExhausted(
@@ -108,14 +118,29 @@ def create_generated(
 
 
 def lookup(conn: sqlite3.Connection, name: str) -> Link | None:
-    """The link stored under ``name``, tombstone included, or None if there never was one."""
+    """The link stored under ``name``, tombstone included, or None if there never was one.
+
+    ``expired`` is decided here, against ``_now()``, rather than stored: a link is either
+    past its ``expires_at`` or it is not, at the moment it is looked up, and there is no
+    column to write it into. A link expiring at exactly ``_now()`` is expired:
+    ``expires_at`` is compared with ``<=``, not ``<``, which
+    reads "expires at T" as "no longer valid from T", the same sense `Expires`/`Max-Age`
+    give a cookie or an HTTP cache entry. ISO-8601 UTC in this exact shape
+    (``%Y-%m-%dT%H:%M:%SZ``) sorts lexicographically in time order, so the comparison is a
+    plain string compare -- no parsing, and SQLite does it without a custom function.
+    """
     row = conn.execute(
-        "SELECT name, target, deleted_at FROM links WHERE name = ?", (name,)
+        "SELECT name, target, deleted_at, expires_at FROM links WHERE name = ?", (name,)
     ).fetchone()
     if row is None:
         return None
+    expires_at = row["expires_at"]
+    expired = expires_at is not None and expires_at <= _now()
     return Link(
-        name=row["name"], target=row["target"], deleted=row["deleted_at"] is not None
+        name=row["name"],
+        target=row["target"],
+        deleted=row["deleted_at"] is not None,
+        expired=expired,
     )
 
 

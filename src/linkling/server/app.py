@@ -20,10 +20,11 @@ Three things here look like configuration and are not:
   where ADR-0001e says ``/<name>/`` *is* ``/<name>`` and R-005 asks for exactly one hop.
 
 Every response the application produces leaves through ``NoStoreMiddleware``. ADR-0003
-settles ``302`` for a follow, ``410`` for a deleted link and ``404`` for an unknown name,
-each with ``Cache-Control: no-store``; but 404 and 405 are heuristically cacheable per RFC
-9110 and the ones Starlette's router generates never reach a handler of ours. Setting the
-header in one place is what stops a cached "gone" outliving the deletion that caused it.
+settles ``302`` for a follow, ``410`` for a deleted **or expired** link and ``404`` for an
+unknown name, each with ``Cache-Control: no-store``; but 404 and 405 are heuristically
+cacheable per RFC 9110 and the ones Starlette's router generates never reach a handler of
+ours. Setting the header in one place is what stops a cached "gone" outliving the deletion
+or expiry that caused it.
 
 **One response does not pass through it**, and it is stated here rather than implied: a
 500 from ``ServerErrorMiddleware``, which Starlette places outside every middleware added
@@ -37,6 +38,7 @@ import hmac
 import sqlite3
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Annotated
 from urllib.parse import urlsplit
 
@@ -170,12 +172,18 @@ async def _too_large(send, limit: int) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
+#: ADR-0013: the shape `created_at`/`expires_at` are stored and printed in, and the only
+#: shape `expires` is accepted in. ISO-8601 UTC in this exact form sorts lexicographically
+#: in time order, which is what lets the boundary check in `links.lookup` stay a plain
+#: string comparison.
+_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+
 class CreateLink(BaseModel):
     """The create request.
 
-    ``extra="forbid"`` is deliberate: when LL-010 adds ``expires``, a caller who sends it
-    to a service that does not have it yet gets a 422 instead of a link that silently
-    never expires.
+    ``extra="forbid"`` is deliberate: a caller who sends ``expires`` to a service that
+    does not have it yet gets a 422 instead of a link that silently never expires.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -183,6 +191,7 @@ class CreateLink(BaseModel):
     url: str
     name: str | None = None
     created_by: str | None = None
+    expires: str | None = None
 
 
 def _validate_target(raw: str) -> str:
@@ -206,6 +215,27 @@ def _validate_target(raw: str) -> str:
         raise HTTPException(422, "url must be an absolute http:// or https:// URL.")
     if not parts.netloc:
         raise HTTPException(422, "url must have a host.")
+    return raw
+
+
+def _validate_expires(raw: str | None) -> str | None:
+    """ADR-0013: `expires` must be an ISO-8601 UTC timestamp in `_TIMESTAMP_FORMAT`.
+
+    Parsed with `strptime` rather than `datetime.fromisoformat`: `fromisoformat` accepts
+    shapes `_TIMESTAMP_FORMAT` does not print (no seconds, a numeric offset, no `Z` at
+    all), and a value the service would never itself produce is one `links.lookup`'s plain
+    string comparison against `expires_at` cannot be trusted to order correctly.
+    """
+    if raw is None:
+        return None
+    try:
+        datetime.strptime(raw, _TIMESTAMP_FORMAT)
+    except ValueError as exc:
+        raise HTTPException(
+            422,
+            "expires must be an ISO-8601 UTC timestamp shaped like "
+            "2026-01-01T00:00:00Z.",
+        ) from exc
     return raw
 
 
@@ -317,11 +347,12 @@ def create_app(config: Config | None = None) -> FastAPI:
     ) -> dict[str, str]:
         target = _validate_target(body.url)
         created_by = _validate_created_by(body.created_by)
+        expires_at = _validate_expires(body.expires)
 
         if body.name is None:
             try:
                 link = links.create_generated(
-                    conn, target=target, created_by=created_by
+                    conn, target=target, created_by=created_by, expires_at=expires_at
                 )
             except links.GenerationExhausted as exc:
                 raise HTTPException(503, str(exc)) from exc
@@ -335,7 +366,11 @@ def create_app(config: Config | None = None) -> FastAPI:
                 )
             try:
                 link = links.create(
-                    conn, name=name, target=target, created_by=created_by
+                    conn,
+                    name=name,
+                    target=target,
+                    created_by=created_by,
+                    expires_at=expires_at,
                 )
             except links.NameTaken as exc:
                 raise HTTPException(
@@ -379,6 +414,8 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(
                 GONE_STATUS, "That link was deleted. Its name stays reserved."
             )
+        if link.expired:
+            raise HTTPException(GONE_STATUS, "That link has expired.")
         return Response(status_code=REDIRECT_STATUS, headers={"Location": link.target})
 
     return app
