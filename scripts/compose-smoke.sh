@@ -51,9 +51,9 @@ else
 fi
 
 # Exported, so that they override anything in a .env beside compose.yaml. LINKLING_BIND_ADDR
-# (round-3 review) matters here too: port_free() above and $base below both hardcode
-# 127.0.0.1, so a stray LINKLING_BIND_ADDR in a developer's own .env -- unrelated to this
-# script, left over from their own deployment work -- must not reach this run's compose stack.
+# (round-3 review) matters here too: port_free() and $base above both hardcode 127.0.0.1, so
+# a stray LINKLING_BIND_ADDR in a developer's own .env -- unrelated to this script, left over
+# from their own deployment work -- must not reach this run's compose stack.
 export LINKLING_API_KEY="$(rand 24)"
 export LINKLING_DATA_DIR="$data"
 export LINKLING_PORT="$port"

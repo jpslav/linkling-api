@@ -57,8 +57,8 @@ tampered or substituted download is refused, not just a version drift.
 | A. Tag only (`python:3.12-slim`) | LL-022's "Done when" requires a digest; a tag can move under a rebuild | — |
 | **B. Digest, tag kept alongside for legibility** | Someone has to re-measure and re-pin it periodically | R4 |
 
-**B.** `linkling-web`'s ADR-0002 chose tag-only for its `nginx:1.27-alpine` image and said
-digest pinning was the fallback "once a bump mechanism exists" — that image copies in two
+**B.** `linkling-web`'s ADR-0002 chose tag-only for its `nginx:1.27-alpine` image and said to
+"revisit if a dependency-update bot is added later" — that image copies in two
 static HTML pages with no application dependencies. This image installs a real Python
 application with a real dependency tree, so the two repos are choosing differently on
 purpose: reproducibility matters more here, and it is worth saying explicitly rather than
