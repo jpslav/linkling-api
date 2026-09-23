@@ -31,17 +31,17 @@ jobs:
   # The service sends nothing to anyone but the client (ADR-0009, scripts/no-third-party-check.sh).
   # Only the service: the site needs the private linkling-web checkout, which this workflow's
   # token cannot fetch (ADR-0015). The second step is the red that makes the first one mean
-  # something: a service that fetches on every create must fail, naming the address it reached.
+  # something: a service that fetches each link's target on create must fail, naming the lookup.
   no-third-party:
     name: no-third-party
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: scripts/no-third-party-check.sh --api-only
-      - name: the check fails a service that fetches on create
+      - name: the check fails a service that fetches its target on create
         run: |
           set +e
           out="$(scripts/no-third-party-check.sh --api-only --mutate api 2>&1)"
           status=$?
           echo "$out"
-          [ "$status" = 1 ] && grep -q 'the first IP to 198\.51\.100\.7\.80' <<<"$out"
+          [ "$status" = 1 ] && grep -q "including a lookup of the link's target host" <<<"$out"

@@ -11,6 +11,8 @@ x-observer: &observer
   image: ${COMPOSE_PROJECT_NAME:-linkling-no3p}-observer
   entrypoint: ["observe", "${LINKLING_NO3P_CAPTURE_FILTER:-}"]
   cap_add: [NET_RAW, NET_ADMIN]
+  # observe.sh ends in `sleep`, which as PID 1 would ignore the SIGTERM `down` sends.
+  init: true
   healthcheck:
     # tcpdump prints this once it is capturing. Until then the service must not start.
     test: ["CMD", "grep", "-q", "listening on", "/cap/tcpdump.err"]

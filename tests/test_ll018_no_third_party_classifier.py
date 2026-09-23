@@ -47,7 +47,10 @@ CONTROL_DNS = [
     "E..W2.@.@.	............4.C.`.a..........!linkling-control-3991486b17817f60.invalid.....",
     "09:52:17.361835 lo    In  IP 127.0.0.11.53 > 127.0.0.1.46482: 56167 0/0/0 (59)",
     "E..W1.@.@.",
+    "..........5...C.`.g..........!linkling-control-3991486b17817f60.invalid.....",
     "09:52:17.445136 lo    In  IP 127.0.0.11.53 > 127.0.0.1.46482: 35681 NXDomain 0/0/0 (59)",
+    "E..W1.@.@.",
+    "..........5...C.`.a..........!linkling-control-3991486b17817f60.invalid.....",
 ]
 
 CLEAN = [GATEWAY_IGMP, ARP, REQUEST, REPLY, *HEALTHCHECK, CONTROL_SYN, *CONTROL_DNS]
@@ -94,7 +97,7 @@ def test_a_packet_received_from_outside_is_not_something_the_service_sent():
 
 
 def test_the_dns_control_is_excused_only_by_its_own_random_name():
-    other_name = [CONTROL_DNS[0], CONTROL_DNS[1].replace("3991486b17817f60", "0000000000000000"), *CONTROL_DNS[2:]]
+    other_name = [line.replace("3991486b17817f60", "0000000000000000") for line in CONTROL_DNS]
     violations, controls, _, _ = run([REPLY, CONTROL_SYN, *other_name])
     assert not controls["dns for " + CONTROL_NAME]
     assert CONTROL_DNS[0] in [p.raw for p in violations]
@@ -148,3 +151,47 @@ def test_exit_status_pass_fail_and_each_blind(capsys):
     # A leak outranks a missing control: it was seen.
     code, last = main_exit([SYN_443], capsys)
     assert code == 1
+
+
+def test_a_connection_opened_from_the_service_port_is_not_a_reply():
+    # A socket bound to the listening port (SO_REUSEPORT) opening a connection of its own.
+    syn_from_8000 = "09:52:18.000008 eth0  Out IP 172.19.0.3.8000 > 93.184.215.14.443: Flags [S], seq 1, win 64240, length 0"
+    violations, *_ = run(CLEAN + [syn_from_8000])
+    assert [p.raw for p in violations] == [syn_from_8000]
+
+
+def test_tcp_is_read_from_the_header_not_from_the_packets_bytes():
+    udp_from_8000 = [
+        "09:52:18.000009 eth0  Out IP 172.19.0.3.8000 > 93.184.215.14.9999: UDP, length 20",
+        "E..0....Flags [P.], ack 1",
+    ]
+    violations, *_ = run(CLEAN + udp_from_8000)
+    assert [p.raw for p in violations] == [udp_from_8000[0]]
+
+
+def test_the_resolvers_replies_to_other_queries_are_not_excused_by_the_control():
+    # The control's reply carries the name, from 127.0.0.11.53; that must not excuse every
+    # other packet from 127.0.0.11.53, such as its reply to a query for an outside name.
+    foreign_reply = "09:52:18.000010 lo    In  IP 127.0.0.11.53 > 127.0.0.1.40000: 4242 1/0/0 A 142.250.1.1 (41)"
+    violations, *_ = run(CLEAN + [foreign_reply])
+    assert [p.raw for p in violations] == [foreign_reply]
+
+
+def test_a_lookup_of_the_links_target_host_is_named_in_the_verdict(capsys):
+    host = "no3p-0011223344556677.target.invalid"
+    lookup = [
+        "09:52:18.000011 lo    In  IP 127.0.0.1.40001 > 127.0.0.11.42804: UDP, length 55",
+        f"E..S..@.@.	..........{host}.....",
+    ]
+    stdin = sys.stdin
+    sys.stdin = io.StringIO("\n".join(CLEAN + lookup) + "\n")
+    try:
+        code = classify_module.main(
+            ["--service", "api", "--service-port", "8000", "--control-addr", CONTROL_ADDR,
+             "--control-name", CONTROL_NAME, "--target-host", host]
+        )
+    finally:
+        sys.stdin = stdin
+    last = capsys.readouterr().out.strip().splitlines()[-1]
+    assert code == 1
+    assert last.endswith(f"including a lookup of the link's target host {host}")

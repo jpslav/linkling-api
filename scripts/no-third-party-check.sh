@@ -90,8 +90,11 @@ data="$run/data"
 # Each capture, as tcpdump prints it, is kept here after the run, so a red one can be read.
 captures="$run/captures"
 canary="no3p-$(rand 8)"
-# TEST-NET-2: even a service that did fetch its targets would reach nobody.
-target="http://198.51.100.1/linkling-no3p/$canary"
+# A host name, not an address: a fetcher that guards against reserved addresses would skip a
+# TEST-NET target and send nothing, while any fetcher has to look a name up first. `.invalid`
+# never resolves (RFC 6761), so even a fetcher that did look it up would reach nobody.
+target_host="$canary.target.invalid"
+target="http://$target_host/linkling-no3p?q=1"
 base="http://127.0.0.1:$port"
 site="http://127.0.0.1:$web_port"
 control_addr="192.0.2.1"
@@ -105,6 +108,8 @@ export LINKLING_DATA_DIR="$data"
 export LINKLING_PORT="$port"
 export LINKLING_WEB_PORT="$web_port"
 export COMPOSE_PROJECT_NAME="$project"
+# compose.observe.yaml reads this, and compose would otherwise take it from a .env file.
+export LINKLING_NO3P_CAPTURE_FILTER="${LINKLING_NO3P_CAPTURE_FILTER:-}"
 
 files=(-f compose.yaml -f scripts/no-third-party/compose.observe.yaml)
 [ -z "$mutate" ] || files+=(-f "scripts/no-third-party/mutations/compose.$mutate.yaml")
@@ -145,38 +150,61 @@ echo "api exercised: create, follow, follow of a missing name, delete, follow of
 findings=()
 
 if [ "$api_only" = 0 ]; then
-    pages=0
+    # Breadth-first from the two pages, following every same-origin stylesheet a page links and
+    # every @import a stylesheet makes, relative or absolute. A remote one is not fetched: the
+    # scan below reports it. Every answer is kept and scanned, a redirect's headers included.
+    queue=(/ /privacy.html)
+    fetched=0
+    pages=""
     sheets=0
-    seen=""
-    fetch() { # <path> -> headers and body in $work/site-N, prints the status
-        local n="$work/site-$((pages + sheets))"
-        curl -s -D "$n.head" -o "$n.body" -w '%{http_code}' "$site$1"
-        printf '%s\n' "$1" >"$n.path"
-    }
-    for path in / /privacy.html; do
-        [ "$(fetch "$path")" = 200 ] || continue
-        page="$work/site-$((pages + sheets))"
-        pages=$((pages + 1))
-        # Same-origin stylesheets the page links; a remote one is a finding below, not fetched.
-        for sheet in $(grep -oiE '<link[^>]+rel="?stylesheet"?[^>]*>' "$page.body" \
-                | grep -oiE 'href="/[^/"][^"]*"' | cut -d'"' -f2 | sort -u); do
-            case " $seen " in *" $sheet "*) continue ;; esac
-            seen="$seen $sheet"
-            [ "$(fetch "$sheet")" = 200 ] && sheets=$((sheets + 1))
+    while [ "$fetched" -lt "${#queue[@]}" ] && [ "$fetched" -lt 50 ]; do
+        path="${queue[$fetched]}"
+        f="$work/site-$fetched"
+        fetched=$((fetched + 1))
+        printf '%s\n' "$path" >"$f.path"
+        status="$(curl -s -D "$f.head" -o "$f.body" -w '%{http_code} %{content_type}' "$site$path")"
+        case "$status" in
+            "200 text/html"*)
+                pages="$pages $path"
+                refs="$(grep -oiE '<link[^>]+>' "$f.body" | grep -iE 'rel=["'"'"']?stylesheet' \
+                    | grep -oiE 'href=["'"'"']?[^"'"'"' >]+' | sed -E 's/^href=["'"'"']?//' || true)" ;;
+            "200 text/css"*)
+                sheets=$((sheets + 1))
+                refs="$(grep -oiE '@import[[:space:]]+(url\()?[[:space:]]*["'"'"']?[^"'"'"' );]+' "$f.body" \
+                    | sed -E 's/^@import[[:space:]]+(url\()?[[:space:]]*["'"'"']?//' || true)" ;;
+            *) refs="" ;;
+        esac
+        for ref in $refs; do
+            case "$ref" in
+                *:*|//*|\\*) continue ;;
+                /*) next="$ref" ;;
+                *) next="${path%/*}/$ref" ;;
+            esac
+            case " ${queue[*]} " in *" $next "*) ;; *) queue+=("$next") ;; esac
         done
     done
-    [ "$pages" = 2 ] || blind "only $pages of the site's 2 pages answered 200, so the site's content was not seen"
+    for path in / /privacy.html; do
+        case "$pages " in
+            *" $path "*) ;;
+            *) blind "the site's $path did not answer 200 with HTML, so its content was not seen" ;;
+        esac
+    done
     [ "$sheets" -ge 1 ] || blind "no stylesheet linked from the site answered 200, so the crawl did not reach it"
     for head in "$work"/site-*.head; do
         n="${head%.head}"
         # Browsers read `https:/host`, `\\host` and `//host` as absolute too, so any run of
-        # slashes or backslashes counts, after a scheme or on its own.
+        # slashes or backslashes counts, after a scheme or on its own. A slash spelt as an
+        # entity or a CSS escape, a <script>, and an inline event handler (which can fetch()
+        # with no <script> at all) count as well.
         hits="$( { grep -oiE '(https?:[/\\]*|[/\\][/\\])[a-z0-9][^"'"'"' )<>]*' "$n.head" "$n.body" || true; \
-                   grep -oiE '<script' "$n.body" /dev/null || true; } \
-                 | sed -e "s|^$n\.head:|in its headers |" -e "s|^$n\.body:|in its body |" | head -3)"
+                   grep -oiE '&#0*47;|&#x0*2f;|&sol;|\\0*2f|<script|[[:space:]]on[a-z]+[[:space:]]*=' "$n.body" /dev/null || true; } \
+                 | sed -e "s|^$n\.head:|in its headers |" -e "s|^$n\.body:|in its body |")"
+        # Trimmed only after the pipeline: `head` closing it early would kill it with SIGPIPE,
+        # and pipefail would end the whole run with neither a verdict nor its captures read.
+        hits="$(head -3 <<<"$hits")"
         [ -z "$hits" ] || findings+=("web serves $(cat "$n.path") with a third-party reference: $(tr '\n' ' ' <<<"$hits")")
     done
-    echo "site fetched: $pages pages and $sheets stylesheet(s), headers and bodies scanned"
+    echo "site fetched:$pages and $sheets stylesheet(s), $fetched answer(s) in all, headers and bodies scanned"
 fi
 
 # --- controls, then judgement ---------------------------------------------------------------
@@ -219,7 +247,8 @@ judge() { # <service> <its port>; appends to findings or blinds, or returns 0 wh
     dc exec -T "obs-$s" tcpdump -nn -A -r /cap/capture.pcap >"$captures/$s.txt" 2>/dev/null || true
     set +e
     verdict="$(dc exec -T "obs-$s" python3 /usr/local/bin/classify.py --service "$s" --service-port "$svc_port" \
-        --control-addr "$control_addr.$control_port" --control-name "$control_name" <"$captures/$s.txt")"
+        --control-addr "$control_addr.$control_port" --control-name "$control_name" \
+        --target-host "$target_host" <"$captures/$s.txt")"
     status=$?
     set -e
     echo "$verdict"

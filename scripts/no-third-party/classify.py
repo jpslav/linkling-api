@@ -61,11 +61,17 @@ class Packet:
     proto: str  # "IP", "IP6", "ARP", or whatever else tcpdump printed there
     src: str = ""
     dst: str = ""
-    payload: str = ""
+    header: str = ""  # what the header line says after "src > dst: "
+    payload: str = ""  # the header's text, then the `-A` dump of the packet's bytes
 
     @property
     def tcp(self) -> bool:
-        return self.proto in ("IP", "IP6") and "Flags [" in self.payload
+        # From the header line only: the dump is the packet's bytes, which anyone can fill.
+        return self.proto in ("IP", "IP6") and self.header.startswith("Flags [")
+
+    @property
+    def opens_connection(self) -> bool:
+        return self.header.startswith("Flags [S],")
 
     @staticmethod
     def port(endpoint: str) -> str:
@@ -92,7 +98,7 @@ def parse(line: str) -> Packet | None:
         dst, sep2, payload = rest.partition(": ")
         if not (sep and sep2):
             return None
-        packet.src, packet.dst, packet.payload = src, dst, payload
+        packet.src, packet.dst, packet.header, packet.payload = src, dst, payload, payload
     return packet
 
 
@@ -124,8 +130,10 @@ def classify(lines, service_port: str, control_addr: str, control_name: str):
 
     # Learn the control queries' source endpoints first, so that the packets on lo that carry
     # no name (the rewritten copy, the replies) can be excused wherever they fall.
+    # Only a query's source counts: the resolver's replies carry the name too, and learning
+    # their source (127.0.0.11.53) would excuse its replies to every other query.
     for p in packets:
-        if control_name in p.payload:
+        if control_name in p.payload and Packet.port(p.src) != "53":
             control_query_sources.add(p.src)
 
     for p in packets:
@@ -148,7 +156,9 @@ def classify(lines, service_port: str, control_addr: str, control_name: str):
         if p.tcp:
             if loopback and service_port in (Packet.port(p.src), Packet.port(p.dst)):
                 continue
-            if not loopback and Packet.port(p.src) == service_port:
+            # A reply leaves from the service port. A bare SYN from it would be the service
+            # opening a connection of its own from its listening port, which is not a reply.
+            if not loopback and Packet.port(p.src) == service_port and not p.opens_connection:
                 replies += 1
                 continue
         dst = Packet.address(p.dst)
@@ -166,6 +176,10 @@ def main(argv=None) -> int:
     ap.add_argument("--service-port", required=True)
     ap.add_argument("--control-addr", required=True, help='as tcpdump prints it, e.g. "192.0.2.1.9"')
     ap.add_argument("--control-name", required=True)
+    ap.add_argument(
+        "--target-host",
+        help="the host of the link the check created; a sent packet naming it is a lookup of it",
+    )
     args = ap.parse_args(argv)
 
     violations, controls, replies, unparsed = classify(
@@ -177,9 +191,11 @@ def main(argv=None) -> int:
         more = f" ({len(violations) - SHOWN} more not shown)" if len(violations) > SHOWN else ""
         first = violations[0]
         to = f"{first.proto} to {first.dst}" if first.dst else first.proto
+        looked_up = args.target_host and any(args.target_host in p.payload for p in violations)
+        target = f", including a lookup of the link's target host {args.target_host}" if looked_up else ""
         print(
             f"fail: {args.service} sent {len(violations)} packet(s) to someone other than the "
-            f"client, the first {to}{more}"
+            f"client, the first {to}{more}{target}"
         )
         return 1
     for line in unparsed[:SHOWN]:

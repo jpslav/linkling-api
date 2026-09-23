@@ -1,4 +1,5 @@
-# --mutate api: the service fetches an outside address on every create (sitecustomize.py).
+# --mutate api: every create also fetches the link's target, behind the usual guard against
+# reserved addresses (sitecustomize.py).
 services:
   api:
     volumes:
