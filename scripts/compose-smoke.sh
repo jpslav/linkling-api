@@ -31,12 +31,38 @@ docker info >/dev/null 2>&1 || blind "the docker daemon is not reachable"
 
 rand() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
 
+# LL-021 (carried from w-LL-018): compose publishes a port from nothing, even one a host
+# process already holds, and this script would then test that squatter and describe it as
+# the service. So refuse before docker is touched at all. Free (0) only on an actively
+# refused connect -- anything else (no /dev/tcp support, a sandboxed connect, a malformed
+# argument) is blind, because a check that reads "never looked" the same as "looked and it
+# was free" is worse than no check.
+port_free() {
+    local out
+    if out="$( (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>&1 )"; then
+        return 1
+    fi
+    case "$out" in
+        *"Connection refused"*) return 0 ;;
+        *) PORT_CHECK_MSG="$out"; return 2 ;;
+    esac
+}
+
 project="${LINKLING_SMOKE_PROJECT:-linkling-smoke}"
 port="${LINKLING_SMOKE_PORT:-18000}"
 data="$PWD/.smoke-data/run-$(rand 6)"
 canary="smoke-$(rand 8)"
 target="https://example.com/linkling-smoke/$canary?q=1"
 base="http://127.0.0.1:$port"
+
+if port_free "$port"; then
+    :
+else
+    case $? in
+        1) fail "port $port is already in use (set LINKLING_SMOKE_PORT to use another)" ;;
+        *) blind "could not tell whether port $port is free: $PORT_CHECK_MSG" ;;
+    esac
+fi
 
 # Exported, so that they override anything in a .env beside compose.yaml.
 export LINKLING_API_KEY="$(rand 24)"
