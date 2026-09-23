@@ -91,9 +91,12 @@ data="$run/data"
 captures="$run/captures"
 canary="no3p-$(rand 8)"
 # A host name, not an address: a fetcher that guards against reserved addresses would skip a
-# TEST-NET target and send nothing, while any fetcher has to look a name up first. `.invalid`
-# never resolves (RFC 6761), so even a fetcher that did look it up would reach nobody.
-target_host="$canary.target.invalid"
+# TEST-NET target and send nothing, while any fetcher has to look a name up first. It is under
+# example.com, a public suffix, because a guard can also refuse special-use names such as
+# `.invalid` before looking them up. example.com is reserved for documentation (RFC 2606) and
+# this random label under it does not resolve, so even a fetcher that looked it up would
+# reach nobody.
+target_host="$canary.example.com"
 target="http://$target_host/linkling-no3p?q=1"
 base="http://127.0.0.1:$port"
 site="http://127.0.0.1:$web_port"
@@ -151,7 +154,7 @@ findings=()
 
 if [ "$api_only" = 0 ]; then
     # Breadth-first from the two pages, following every same-origin stylesheet a page links and
-    # every @import a stylesheet makes, relative or absolute. A remote one is not fetched: the
+    # every @import a stylesheet or a <style> makes, relative or absolute (refs.py). A remote one is not fetched: the
     # scan below reports it. Every answer is kept and scanned, a redirect's headers included.
     queue=(/ /privacy.html)
     fetched=0
@@ -162,26 +165,22 @@ if [ "$api_only" = 0 ]; then
         f="$work/site-$fetched"
         fetched=$((fetched + 1))
         printf '%s\n' "$path" >"$f.path"
-        status="$(curl -s -D "$f.head" -o "$f.body" -w '%{http_code} %{content_type}' "$site$path")"
+        # -g: a path is a path, not one of curl's globs. A failed fetch is an answer of 000,
+        # which the checks below treat as unseen, rather than an exit that skips the verdict.
+        status="$(curl -g -s -D "$f.head" -o "$f.body" -w '%{http_code} %{content_type}' "$site$path")" \
+            || status="000"
         case "$status" in
-            "200 text/html"*)
-                pages="$pages $path"
-                refs="$(grep -oiE '<link[^>]+>' "$f.body" | grep -iE 'rel=["'"'"']?stylesheet' \
-                    | grep -oiE 'href=["'"'"']?[^"'"'"' >]+' | sed -E 's/^href=["'"'"']?//' || true)" ;;
-            "200 text/css"*)
-                sheets=$((sheets + 1))
-                refs="$(grep -oiE '@import[[:space:]]+(url\()?[[:space:]]*["'"'"']?[^"'"'"' );]+' "$f.body" \
-                    | sed -E 's/^@import[[:space:]]+(url\()?[[:space:]]*["'"'"']?//' || true)" ;;
-            *) refs="" ;;
+            "200 text/html"*) pages="$pages $path"; kind=html ;;
+            "200 text/css"*) sheets=$((sheets + 1)); kind=css ;;
+            *) continue ;;
         esac
-        for ref in $refs; do
-            case "$ref" in
-                *:*|//*|\\*) continue ;;
-                /*) next="$ref" ;;
-                *) next="${path%/*}/$ref" ;;
-            esac
+        # An HTML parser, in the observer, which has Python; the host needs only curl.
+        refs="$(dc exec -T obs-web python3 /usr/local/bin/refs.py "$kind" "$site$path" <"$f.body")" \
+            || blind "could not list the references in $path, so the crawl may have stopped short"
+        while IFS= read -r next; do
+            [ -n "$next" ] || continue
             case " ${queue[*]} " in *" $next "*) ;; *) queue+=("$next") ;; esac
-        done
+        done <<<"$refs"
     done
     for path in / /privacy.html; do
         case "$pages " in
@@ -264,6 +263,9 @@ judge api 8000
 join() { printf '%s; ' "$@" | sed 's/; $//'; }
 [ "${#findings[@]}" = 0 ] || fail "$(join "${findings[@]}")"
 [ "${#blinds[@]}" = 0 ] || blind "$(join "${blinds[@]}")"
+
+[ -z "$LINKLING_NO3P_CAPTURE_FILTER" ] \
+    || blind "the capture was filtered ('$LINKLING_NO3P_CAPTURE_FILTER'), so what the filter dropped was never judged"
 
 if [ "$api_only" = 1 ]; then
     echo "pass (api only: web not checked)"

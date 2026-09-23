@@ -71,7 +71,9 @@ class Packet:
 
     @property
     def opens_connection(self) -> bool:
-        return self.header.startswith("Flags [S],")
+        # SYN without ACK, whatever else is set: an ECN SYN prints as `Flags [SEW]`.
+        flags = self.header[len("Flags ["):].split("]", 1)[0] if self.tcp else ""
+        return "S" in flags and "." not in flags
 
     @staticmethod
     def port(endpoint: str) -> str:

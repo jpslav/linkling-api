@@ -195,3 +195,37 @@ def test_a_lookup_of_the_links_target_host_is_named_in_the_verdict(capsys):
     last = capsys.readouterr().out.strip().splitlines()[-1]
     assert code == 1
     assert last.endswith(f"including a lookup of the link's target host {host}")
+
+
+def test_an_ecn_syn_from_the_service_port_is_not_a_reply():
+    ecn_syn = "09:52:18.000012 eth0  Out IP 172.19.0.3.8000 > 93.184.215.14.443: Flags [SEW], seq 1, win 64240, length 0"
+    violations, *_ = run(CLEAN + [ecn_syn])
+    assert [p.raw for p in violations] == [ecn_syn]
+
+
+_REFS_PATH = _PATH.parent / "refs.py"
+_refs_spec = importlib.util.spec_from_file_location("no3p_refs", _REFS_PATH)
+refs_module = importlib.util.module_from_spec(_refs_spec)
+_refs_spec.loader.exec_module(refs_module)
+
+
+def test_the_crawl_finds_stylesheets_in_every_ordinary_shape():
+    page = """<!DOCTYPE html><html><head>
+      <link rel="stylesheet" href="/single.css">
+      <link rel="stylesheet"
+            href="/split.css">
+      <link rel="preload stylesheet" href="relative.css">
+      <link rel="alternate stylesheet" href="../up.css?v=a/b">
+      <link rel="icon" href="/favicon.ico">
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">
+      <style>@import"inline.css"; body { margin: 0 }</style>
+    </head></html>"""
+    got = refs_module.same_origin_paths("html", "http://127.0.0.1:18180/dir/page.html", page)
+    assert got == ["/single.css", "/split.css", "/dir/relative.css", "/up.css?v=a/b", "/dir/inline.css"]
+
+
+def test_the_crawl_follows_every_import_shape_in_a_stylesheet():
+    sheet = """@import "a.css"; @import url(b.css); @import url( 'c.css' );@import"d.css";
+      @import url(https://fonts.googleapis.com/css2?family=Inter);"""
+    got = refs_module.same_origin_paths("css", "http://127.0.0.1:18180/css/main.css", sheet)
+    assert got == ["/css/a.css", "/css/b.css", "/css/c.css", "/css/d.css"]

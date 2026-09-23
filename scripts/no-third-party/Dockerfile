@@ -7,5 +7,5 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends tcpdump \
     && rm -rf /var/lib/apt/lists/*
 
-COPY classify.py /usr/local/bin/classify.py
+COPY classify.py refs.py /usr/local/bin/
 COPY observe.sh /usr/local/bin/observe
