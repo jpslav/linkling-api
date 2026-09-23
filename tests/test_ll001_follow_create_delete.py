@@ -140,10 +140,10 @@ def test_a_target_that_is_not_an_absolute_ascii_http_url_is_refused(client, auth
 
 
 def test_an_unknown_field_is_refused_rather_than_ignored(client, auth, target):
-    """When LL-010 adds `expires`, a caller sending it today must not get a forever link."""
+    """ADR-0011b: an unrecognised field is a 422, never silently dropped."""
     response = client.post(
         "/-/api/links",
-        json={"url": target, "name": "q3-plan", "expires": "7d"},
+        json={"url": target, "name": "q3-plan", "not_a_real_field": "x"},
         headers=auth,
     )
     assert response.status_code == 422, response.text

@@ -54,10 +54,17 @@ class Link:
     name: str
     target: str
     deleted: bool
+    expired: bool
+
+
+#: The one shape every timestamp this service stores or accepts is written in. A single
+#: constant here, rather than a copy beside each user, is what keeps `_now()`'s output and
+#: `app.py`'s `expires` validation from drifting into two shapes that happen to agree today.
+TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(timezone.utc).strftime(TIMESTAMP_FORMAT)
 
 
 def create(
@@ -66,16 +73,28 @@ def create(
     name: str,
     target: str,
     created_by: str | None = None,
+    expires_at: str | None = None,
+    created_at: str | None = None,
 ) -> Link:
-    """Create a link under a name the caller chose. Raises NameTaken."""
+    """Create a link under a name the caller chose. Raises NameTaken.
+
+    ``created_at`` defaults to ``_now()`` here, but a caller that already read the clock
+    for another reason -- ``app.py`` reads it once to check ``expires`` is still in the
+    future -- should pass that same value through rather than let this call read it again.
+    Two separate reads let a second tick land between them: an `expires` a caller chose to
+    be one second in the future could pass validation against the first read and still be
+    equal to, or earlier than, `created_at` from the second, landing already-expired.
+    """
+    when = _now() if created_at is None else created_at
     try:
         conn.execute(
-            "INSERT INTO links(name, target, created_at, created_by) VALUES (?, ?, ?, ?)",
-            (name, target, _now(), created_by),
+            "INSERT INTO links(name, target, created_at, created_by, expires_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (name, target, when, created_by, expires_at),
         )
     except sqlite3.IntegrityError as exc:
         raise NameTaken(name) from exc
-    return Link(name=name, target=target, deleted=False)
+    return Link(name=name, target=target, deleted=False, expired=False)
 
 
 def create_generated(
@@ -83,6 +102,8 @@ def create_generated(
     *,
     target: str,
     created_by: str | None = None,
+    expires_at: str | None = None,
+    created_at: str | None = None,
     generate: Callable[[], str] | None = None,
     attempts: int = GENERATE_ATTEMPTS,
 ) -> Link:
@@ -99,7 +120,14 @@ def create_generated(
     for _ in range(attempts):
         candidate = make_name()
         try:
-            return create(conn, name=candidate, target=target, created_by=created_by)
+            return create(
+                conn,
+                name=candidate,
+                target=target,
+                created_by=created_by,
+                expires_at=expires_at,
+                created_at=created_at,
+            )
         except NameTaken:
             continue
     raise GenerationExhausted(
@@ -108,14 +136,31 @@ def create_generated(
 
 
 def lookup(conn: sqlite3.Connection, name: str) -> Link | None:
-    """The link stored under ``name``, tombstone included, or None if there never was one."""
+    """The link stored under ``name``, tombstone included, or None if there never was one.
+
+    ``expired`` is decided here, against ``_now()``, rather than stored: a link is either
+    past its ``expires_at`` or it is not, at the moment it is looked up, and there is no
+    column to write it into. A link expiring at exactly ``_now()`` is expired:
+    ``expires_at`` is compared with ``<=``, not ``<``, matching RFC 7519 SS4.1.4's own
+    ``exp`` claim -- "the expiration time on or after which the JWT MUST NOT be accepted"
+    -- rather than RFC 6265 SS5.3's cookie, which reads the opposite way ("'expired' if the
+    cookie has an expiry date in the past", so a cookie is still good exactly at its own
+    Expires instant). ISO-8601 UTC in this exact shape (``TIMESTAMP_FORMAT``) sorts
+    lexicographically in time order, so the comparison below is a plain Python string
+    compare against ``_now()`` -- no parsing, no SQL function.
+    """
     row = conn.execute(
-        "SELECT name, target, deleted_at FROM links WHERE name = ?", (name,)
+        "SELECT name, target, deleted_at, expires_at FROM links WHERE name = ?", (name,)
     ).fetchone()
     if row is None:
         return None
+    expires_at = row["expires_at"]
+    expired = expires_at is not None and expires_at <= _now()
     return Link(
-        name=row["name"], target=row["target"], deleted=row["deleted_at"] is not None
+        name=row["name"],
+        target=row["target"],
+        deleted=row["deleted_at"] is not None,
+        expired=expired,
     )
 
 
