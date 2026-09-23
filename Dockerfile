@@ -21,6 +21,12 @@ RUN pip install --no-cache-dir .
 
 COPY --chmod=755 deploy/entrypoint.sh /usr/local/bin/linkling-entrypoint
 
+# stdout is a pipe here, so Python would block-buffer it, and uvicorn re-raises the SIGTERM it
+# caught, so a buffer is never flushed on stop. Anything written there would then never reach
+# `docker compose logs`, and a check that those logs hold no client address would pass
+# without having seen it (tests/test_ll004_no_trace.py measured the same thing).
+ENV PYTHONUNBUFFERED=1
+
 EXPOSE 8000
 ENTRYPOINT ["linkling-entrypoint"]
 # The README's own invocation, with only the host changed. --no-access-log is ADR-0012's
