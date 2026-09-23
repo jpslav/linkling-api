@@ -1,0 +1,5 @@
+# --mutate api: the service fetches an outside address on every create (sitecustomize.py).
+services:
+  api:
+    volumes:
+      - ./scripts/no-third-party/mutations/sitecustomize.py:/usr/local/lib/python3.12/site-packages/sitecustomize.py:ro

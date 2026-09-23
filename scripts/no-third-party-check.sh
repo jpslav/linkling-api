@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+# Brings up the compose stack and shows that it sends nothing to anyone but the client
+# (ADR-0009, LL-018). Every packet the `api` and `web` containers send is captured, from
+# before each one starts, while the check creates a link, follows it, follows a name that does
+# not exist, deletes the link, follows it again, and loads the public site. A sent packet that
+# is not a reply to the check's own requests fails the run, and so does any DNS query.
+#
+# A capture that sees nothing looks exactly like a clean one, so every run plants its own
+# positive controls: from inside each captured network namespace, a TCP connection to
+# 192.0.2.1:9 (TEST-NET-1, RFC 5737: it reaches nobody) and a lookup of a random
+# `linkling-control-<random>.invalid`. Both must show up in the capture, as must the service's
+# replies to the check, or the run is blind. scripts/no-third-party/classify.py has the rules.
+#
+# The site is also judged by what it serves: `/`, `/privacy.html` and every stylesheet they
+# link are fetched, and their headers and bodies must hold no absolute or protocol-relative
+# URL and no <script>. That is deliberately stricter than "loads nothing": an outbound link a
+# browser would not fetch fails too, until someone adds a reviewed exception here.
+#
+# What this cannot see, so that nobody reads more into a pass than it holds: routes and paths
+# it does not exercise; anything the services would do after the run's window (on a timer, say);
+# what a browser does with the pages, since no browser runs; what the host or Docker Desktop
+# does outside the containers (the image build, the published-port proxy); and a proxy a
+# deployer puts in front. The README's "Run it with Docker" says the same.
+#
+# Usage: scripts/no-third-party-check.sh [--api-only] [--mutate api|web-net|web-page]
+#   --api-only  check only the service. CI uses it, because CI cannot fetch the private
+#               linkling-web checkout the site is built from (ADR-0015). Without it, a missing
+#               checkout is blind, never a silent skip.
+#   --mutate    layer in a deliberate leak from scripts/no-third-party/mutations/, to show the
+#               check going red. Each must fail and name what it saw.
+#
+# Like scripts/compose-smoke.sh, it uses its own compose project, ports and data directory:
+#   LINKLING_NO3P_PROJECT   compose project name   (default linkling-no3p)
+#   LINKLING_NO3P_PORT      host port for the api  (default 18100)
+#   LINKLING_NO3P_WEB_PORT  host port for the site (default 18180)
+#   LINKLING_WEB_DIR        the linkling-web checkout (default ../linkling-web, as compose.yaml)
+# Each run gets a fresh .smoke-data/no3p-run-<random>/, holding the service's database and the
+# captures as tcpdump prints them. It is left behind, as compose-smoke.sh leaves its own: on
+# Linux the database directory ends up owned by the container's uid. The team key is random
+# per run and never printed.
+# Two more exist only so the blind states can be shown: LINKLING_NO3P_CAPTURE_FILTER gives
+# tcpdump a filter (one that matches nothing makes the controls go missing), and
+# LINKLING_NO3P_STOP_OBSERVER=api|web stops that observer before its capture is read.
+#
+# Exit status: 0 `pass`, 1 `fail: <what was sent or served>`, 2 `blind: <what was absent>`.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+fail() { echo "fail: $*" >&2; exit 1; }
+blind() { echo "blind: $*" >&2; exit 2; }
+usage() { echo "usage: $0 [--api-only] [--mutate api|web-net|web-page]" >&2; exit 64; }
+
+api_only=0
+mutate=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --api-only) api_only=1 ;;
+        --mutate) [ $# -ge 2 ] || usage; mutate="$2"; shift ;;
+        *) usage ;;
+    esac
+    shift
+done
+case "$mutate" in
+    ""|api) ;;
+    web-net|web-page) [ "$api_only" = 0 ] || usage ;;
+    *) usage ;;
+esac
+
+command -v docker >/dev/null 2>&1 || blind "docker is not on PATH"
+command -v curl >/dev/null 2>&1 || blind "curl is not on PATH"
+docker info >/dev/null 2>&1 || blind "the docker daemon is not reachable"
+
+services=(api)
+if [ "$api_only" = 0 ]; then
+    web_dir="${LINKLING_WEB_DIR:-../linkling-web}"
+    [ -f "$web_dir/Dockerfile" ] \
+        || blind "no linkling-web checkout at $web_dir, so the site cannot be checked (--api-only checks the service alone)"
+    services+=(web)
+fi
+
+rand() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
+
+project="${LINKLING_NO3P_PROJECT:-linkling-no3p}"
+port="${LINKLING_NO3P_PORT:-18100}"
+web_port="${LINKLING_NO3P_WEB_PORT:-18180}"
+run="$PWD/.smoke-data/no3p-run-$(rand 6)"
+data="$run/data"
+# Each capture, as tcpdump prints it, is kept here after the run, so a red one can be read.
+captures="$run/captures"
+canary="no3p-$(rand 8)"
+# TEST-NET-2: even a service that did fetch its targets would reach nobody.
+target="http://198.51.100.1/linkling-no3p/$canary"
+base="http://127.0.0.1:$port"
+site="http://127.0.0.1:$web_port"
+control_addr="192.0.2.1"
+control_port=9
+control_name="linkling-control-$(rand 8).invalid"
+work="$(mktemp -d)"
+
+# Exported, so that they override anything in a .env beside compose.yaml.
+export LINKLING_API_KEY="$(rand 24)"
+export LINKLING_DATA_DIR="$data"
+export LINKLING_PORT="$port"
+export LINKLING_WEB_PORT="$web_port"
+export COMPOSE_PROJECT_NAME="$project"
+
+files=(-f compose.yaml -f scripts/no-third-party/compose.observe.yaml)
+[ -z "$mutate" ] || files+=(-f "scripts/no-third-party/mutations/compose.$mutate.yaml")
+
+dc() { docker compose -p "$project" "${files[@]}" "$@"; }
+
+cleanup() { dc down >/dev/null 2>&1 || true; rm -rf "$work"; }
+trap cleanup EXIT
+
+echo "project $project, api on $base$([ "$api_only" = 1 ] || echo ", site on $site"), mutation ${mutate:-none}"
+mkdir -p "$captures"
+echo "captures will be kept in $captures"
+
+if ! dc up -d --build --wait --wait-timeout 180 "${services[@]}" >"$work/up.log" 2>&1; then
+    tail -20 "$work/up.log" >&2
+    for s in "${services[@]}"; do dc logs --no-color --tail 10 "obs-$s" "$s" >&2 || true; done
+    blind "the stack never came up healthy, so nothing was exercised"
+fi
+
+# --- exercise -------------------------------------------------------------------------------
+
+expect() { # <what> <wanted> <got>
+    [ "$3" = "$2" ] || { cat "$work/create.body" >&2 2>/dev/null || true; echo >&2
+        blind "$1 answered '$3', not '$2', so the run did not exercise what it claims"; }
+}
+auth=(-H "Authorization: Bearer $LINKLING_API_KEY")
+
+# Built outside the $(...) below: macOS's bash 3.2 mangles \" inside a quoted substitution.
+body="{\"url\": \"$target\", \"name\": \"$canary\"}"
+expect "creating the link" 201 "$(curl -s -o "$work/create.body" -w '%{http_code}' -X POST "$base/-/api/links" \
+    "${auth[@]}" -H 'Content-Type: application/json' -d "$body")"
+expect "following the link" "302 $target" "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$base/$canary")"
+expect "following a name that does not exist" 404 "$(curl -s -o /dev/null -w '%{http_code}' "$base/$canary-absent")"
+expect "deleting the link" 204 "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$base/-/api/links/$canary" "${auth[@]}")"
+expect "following the deleted link" 410 "$(curl -s -o /dev/null -w '%{http_code}' "$base/$canary")"
+echo "api exercised: create, follow, follow of a missing name, delete, follow of the deleted link"
+
+findings=()
+
+if [ "$api_only" = 0 ]; then
+    pages=0
+    sheets=0
+    seen=""
+    fetch() { # <path> -> headers and body in $work/site-N, prints the status
+        local n="$work/site-$((pages + sheets))"
+        curl -s -D "$n.head" -o "$n.body" -w '%{http_code}' "$site$1"
+        printf '%s\n' "$1" >"$n.path"
+    }
+    for path in / /privacy.html; do
+        [ "$(fetch "$path")" = 200 ] || continue
+        page="$work/site-$((pages + sheets))"
+        pages=$((pages + 1))
+        # Same-origin stylesheets the page links; a remote one is a finding below, not fetched.
+        for sheet in $(grep -oiE '<link[^>]+rel="?stylesheet"?[^>]*>' "$page.body" \
+                | grep -oiE 'href="/[^/"][^"]*"' | cut -d'"' -f2 | sort -u); do
+            case " $seen " in *" $sheet "*) continue ;; esac
+            seen="$seen $sheet"
+            [ "$(fetch "$sheet")" = 200 ] && sheets=$((sheets + 1))
+        done
+    done
+    [ "$pages" = 2 ] || blind "only $pages of the site's 2 pages answered 200, so the site's content was not seen"
+    [ "$sheets" -ge 1 ] || blind "no stylesheet linked from the site answered 200, so the crawl did not reach it"
+    for head in "$work"/site-*.head; do
+        n="${head%.head}"
+        # Browsers read `https:/host`, `\\host` and `//host` as absolute too, so any run of
+        # slashes or backslashes counts, after a scheme or on its own.
+        hits="$( { grep -oiE '(https?:[/\\]*|[/\\][/\\])[a-z0-9][^"'"'"' )<>]*' "$n.head" "$n.body" || true; \
+                   grep -oiE '<script' "$n.body" /dev/null || true; } \
+                 | sed -e "s|^$n\.head:|in its headers |" -e "s|^$n\.body:|in its body |" | head -3)"
+        [ -z "$hits" ] || findings+=("web serves $(cat "$n.path") with a third-party reference: $(tr '\n' ' ' <<<"$hits")")
+    done
+    echo "site fetched: $pages pages and $sheets stylesheet(s), headers and bodies scanned"
+fi
+
+# --- controls, then judgement ---------------------------------------------------------------
+
+for s in "${services[@]}"; do
+    # Run from the observer, which shares the service's network namespace: the same packets.
+    dc exec -T "obs-$s" python3 - "$control_addr" "$control_port" "$control_name" <<'PY' \
+        || blind "could not plant the positive controls in the $s namespace"
+import socket, sys
+addr, port, name = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+try:
+    socket.create_connection((addr, port), timeout=2).close()
+except OSError:
+    pass
+try:
+    socket.getaddrinfo(name, 80)
+except OSError:
+    pass
+PY
+done
+sleep 2  # let the last packets land before the captures stop
+
+if [ -n "${LINKLING_NO3P_STOP_OBSERVER:-}" ]; then
+    dc stop "obs-$LINKLING_NO3P_STOP_OBSERVER" >/dev/null 2>&1 || true
+fi
+
+# A leak seen in one service is an observation even when another service's capture was blind,
+# so every service is judged before either verdict is given, and fail outranks blind.
+blinds=()
+judge() { # <service> <its port>; appends to findings or blinds, or returns 0 when clean
+    local s="$1" svc_port="$2" dropped verdict status
+    # SIGINT makes tcpdump flush and report what the kernel dropped.
+    dc exec -T "obs-$s" sh -c 'kill -INT "$(cat /cap/tcpdump.pid)" && \
+        for i in $(seq 50); do kill -0 "$(cat /cap/tcpdump.pid)" 2>/dev/null || exit 0; sleep 0.2; done; exit 1' \
+        >/dev/null 2>&1 \
+        || { blinds+=("the $s observer is not running, or its capture would not stop, so nothing it saw can be read"); return; }
+    dropped="$(dc exec -T "obs-$s" sed -n 's/^\([0-9]*\) packets\{0,1\} dropped by kernel$/\1/p' /cap/tcpdump.err || true)"
+    [ -n "$dropped" ] || { blinds+=("the $s capture never reported its kernel drops, so it did not end cleanly"); return; }
+    [ "$dropped" = 0 ] || { blinds+=("the kernel dropped $dropped packet(s) from the $s capture, so it is incomplete"); return; }
+    dc exec -T "obs-$s" tcpdump -nn -A -r /cap/capture.pcap >"$captures/$s.txt" 2>/dev/null || true
+    set +e
+    verdict="$(dc exec -T "obs-$s" python3 /usr/local/bin/classify.py --service "$s" --service-port "$svc_port" \
+        --control-addr "$control_addr.$control_port" --control-name "$control_name" <"$captures/$s.txt")"
+    status=$?
+    set -e
+    echo "$verdict"
+    case "$status" in
+        0) ;;
+        1) findings+=("$(tail -1 <<<"$verdict" | sed 's/^fail: //')") ;;
+        *) blinds+=("$(tail -1 <<<"$verdict" | sed 's/^blind: //')") ;;
+    esac
+}
+judge api 8000
+[ "$api_only" = 1 ] || judge web 80
+
+join() { printf '%s; ' "$@" | sed 's/; $//'; }
+[ "${#findings[@]}" = 0 ] || fail "$(join "${findings[@]}")"
+[ "${#blinds[@]}" = 0 ] || blind "$(join "${blinds[@]}")"
+
+if [ "$api_only" = 1 ]; then
+    echo "pass (api only: web not checked)"
+else
+    echo "pass"
+fi
