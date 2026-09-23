@@ -1,7 +1,8 @@
 #!/bin/sh
 # Starts as root only long enough to make the bind-mounted /data usable by the service's own
 # user, then drops to it for good (ADR-0015 ii). On Linux, a host directory Docker creates
-# for a bind mount is owned by root, which a non-root service cannot write into.
+# for a bind mount is owned by root (INFERRED from Docker's documentation), which a non-root
+# service cannot write into.
 set -eu
 
 uid=10001

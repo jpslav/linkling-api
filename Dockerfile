@@ -3,8 +3,9 @@
 # volume whenever nothing is mounted there, which is one `docker compose down -v` from gone.
 FROM python:3.12-slim
 
-# sqlite3 is here for the backup command the README documents (ADR-0007b), which runs inside
-# this container rather than on the host because the service opens the database in WAL mode.
+# sqlite3 is here for the backup command the README documents (ADR-0007b). It runs inside this
+# container, on the same host as the service, because the service opens the database in WAL
+# mode and WAL requires that (https://sqlite.org/wal.html).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends sqlite3 \
     && rm -rf /var/lib/apt/lists/*

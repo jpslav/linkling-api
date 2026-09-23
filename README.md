@@ -63,8 +63,9 @@ none. Nothing in the service reads it yet, so the compose file does not ask for 
 **Whatever you put in front of it must not log addresses either.** Neither container logs a
 visitor's address — the service runs with `--no-access-log` and the site with nginx's logging
 off (`deploy/nginx-privacy.conf`). A TLS proxy you add in front is outside the compose file,
-and most proxies log every client's address by default. Turn its access log off, or the
-privacy promise stops being true at your front door.
+and some proxies log every client's address by default. nginx does, which is why the site's
+container needs that file. Turn your proxy's access log off, and keep client addresses out
+of its error log too. Otherwise the privacy promise stops being true at your front door.
 
 `scripts/compose-smoke.sh` checks a stack started from nothing. It confirms that the service
 answers, that a link survives `docker compose down` and `up`, that the backup below is sound,
@@ -94,8 +95,21 @@ docker compose exec -u linkling api \
 The backup lands next to the database, in `./data/`. **Then copy it off this machine**: a
 backup on the same disk goes wherever the disk goes. Run it before every upgrade, and as often
 as you can bear to lose the links made since the last one. The command runs inside the
-container because the service opens the database in WAL mode, and it is the command the
-CLI's `linkling backup` verb will wrap.
+container. That needs no `sqlite3` on the host, and it reads the database on the same machine
+the service writes it on. That matters because the service opens the database in WAL mode,
+and WAL requires every reader to be on one host (<https://sqlite.org/wal.html>). Whether a
+host-side read through Docker Desktop's file sharing would be safe is untested. This is the
+command the CLI's `linkling backup` verb will wrap.
+
+### Upgrade
+
+Back up first. Then pull both checkouts and rebuild: a plain `docker compose up -d` reuses
+the images it has already built.
+
+```bash
+git pull && git -C ../linkling-web pull
+docker compose up -d --build
+```
 
 ### Restore
 
