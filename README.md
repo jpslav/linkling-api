@@ -52,6 +52,7 @@ docker compose up -d
 | `LINKLING_PORT` | `8000` | the service's host port: short links and the API |
 | `LINKLING_WEB_PORT` | `8080` | the public site's host port |
 | `LINKLING_WEB_DIR` | `../linkling-web` | the site's checkout |
+| `LINKLING_BIND_ADDR` | `127.0.0.1` | which interface both ports bind to |
 
 Each can go in the shell's environment or in `.env`. Inside the container the database is
 always `/data/linkling.db`. **`LINKLING_PUBLIC_URL`** is the host every short link is
@@ -68,6 +69,13 @@ off (`deploy/nginx-privacy.conf`). A TLS proxy you add in front is outside the c
 and some proxies log every client's address by default. nginx does, which is why the site's
 container needs that file. Turn your proxy's access log off, and keep client addresses out
 of its error log too. Otherwise the privacy promise stops being true at your front door.
+
+**Both ports bind to `127.0.0.1` by default, so nothing is reachable from off this host until
+you opt in** (`docs/adr/0017`). This is deliberate: a TLS proxy in front only protects you if
+the raw port cannot also be reached directly, and the raw port carries the team key
+(`LINKLING_API_KEY`) in cleartext. If you are not putting a proxy in front — a LAN-only box,
+say — set `LINKLING_BIND_ADDR=0.0.0.0` (or a specific interface's address) to publish both
+ports everywhere.
 
 `scripts/compose-smoke.sh` checks a stack started from nothing. It confirms that the service
 answers, that a link survives `docker compose down` and `up`, that the backup below is sound,

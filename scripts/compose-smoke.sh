@@ -31,6 +31,9 @@ docker info >/dev/null 2>&1 || blind "the docker daemon is not reachable"
 
 rand() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
 
+# shellcheck source=lib/port-check.sh
+. scripts/lib/port-check.sh
+
 project="${LINKLING_SMOKE_PROJECT:-linkling-smoke}"
 port="${LINKLING_SMOKE_PORT:-18000}"
 data="$PWD/.smoke-data/run-$(rand 6)"
@@ -38,10 +41,23 @@ canary="smoke-$(rand 8)"
 target="https://example.com/linkling-smoke/$canary?q=1"
 base="http://127.0.0.1:$port"
 
-# Exported, so that they override anything in a .env beside compose.yaml.
+if port_free "$port"; then
+    :
+else
+    case $? in
+        1) fail "port $port is already in use (set LINKLING_SMOKE_PORT to use another)" ;;
+        *) blind "could not tell whether port $port is free: $PORT_CHECK_MSG" ;;
+    esac
+fi
+
+# Exported, so that they override anything in a .env beside compose.yaml. LINKLING_BIND_ADDR
+# (round-3 review) matters here too: port_free() and $base above both hardcode 127.0.0.1, so
+# a stray LINKLING_BIND_ADDR in a developer's own .env -- unrelated to this script, left over
+# from their own deployment work -- must not reach this run's compose stack.
 export LINKLING_API_KEY="$(rand 24)"
 export LINKLING_DATA_DIR="$data"
 export LINKLING_PORT="$port"
+export LINKLING_BIND_ADDR=127.0.0.1
 
 dc() { docker compose -p "$project" "$@"; }
 

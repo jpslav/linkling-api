@@ -15,7 +15,9 @@ services:
       # can see and back up, and `docker compose down -v` does not touch it.
       - ${LINKLING_DATA_DIR:-./data}:/data
     ports:
-      - "${LINKLING_PORT:-8000}:8000"
+      # Loopback by default (ADR-0017): reachable only from this host until a deployer opts
+      # in with LINKLING_BIND_ADDR, so a TLS proxy in front cannot be bypassed on the raw port.
+      - "${LINKLING_BIND_ADDR:-127.0.0.1}:${LINKLING_PORT:-8000}:8000"
     restart: unless-stopped
     healthcheck:
       # There is no health route yet. Nothing answers GET on /-/api/links, so the app's
@@ -43,5 +45,7 @@ services:
     volumes:
       - ./deploy/nginx-privacy.conf:/etc/nginx/conf.d/00-privacy.conf:ro
     ports:
-      - "${LINKLING_WEB_PORT:-8080}:80"
+      # Same default as the api service, and the same variable (ADR-0017 i): a deployer
+      # fronting one origin with a proxy is fronting both.
+      - "${LINKLING_BIND_ADDR:-127.0.0.1}:${LINKLING_WEB_PORT:-8080}:80"
     restart: unless-stopped

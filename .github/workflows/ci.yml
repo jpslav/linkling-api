@@ -45,3 +45,27 @@ jobs:
           status=$?
           echo "$out"
           [ "$status" = 1 ] && grep -q "including a lookup of the link's target host" <<<"$out"
+
+  # LL-022: websockets/wsproto must not become importable (ADR-0017 ii) -- either one makes
+  # uvicorn log a rejected WebSocket's client address to its error logger, which
+  # --no-access-log does not touch. The Dockerfile also runs this same script as a build step,
+  # so a real image with the leak fails to build; this job is the fast, no-rebuild copy that
+  # keeps the red path exercised on every PR, mirroring no-third-party's --mutate step above.
+  no-forbidden-imports:
+    name: no-forbidden-imports
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[test]"
+      - run: scripts/no-forbidden-imports-check.sh
+      - name: the check fails when a forbidden dependency is importable
+        run: |
+          set +e
+          pip install --no-cache-dir websockets >/dev/null
+          out="$(scripts/no-forbidden-imports-check.sh 2>&1)"
+          status=$?
+          echo "$out"
+          [ "$status" = 1 ] && grep -q "websockets" <<<"$out"

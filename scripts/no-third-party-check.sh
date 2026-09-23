@@ -88,6 +88,9 @@ fi
 
 rand() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
 
+# shellcheck source=lib/port-check.sh
+. scripts/lib/port-check.sh
+
 project="${LINKLING_NO3P_PROJECT:-linkling-no3p}"
 port="${LINKLING_NO3P_PORT:-18100}"
 web_port="${LINKLING_NO3P_WEB_PORT:-18180}"
@@ -111,15 +114,9 @@ control_port=9
 control_name="linkling-control-$(rand 8).invalid"
 work="$(mktemp -d)"
 
-# Exported, so that they override anything in a .env beside compose.yaml.
-export LINKLING_API_KEY="$(rand 24)"
-export LINKLING_DATA_DIR="$data"
-export LINKLING_PORT="$port"
-export LINKLING_WEB_PORT="$web_port"
-export COMPOSE_PROJECT_NAME="$project"
-# compose.observe.yaml reads this, and compose would otherwise take it from a .env file.
-export LINKLING_NO3P_CAPTURE_FILTER="${LINKLING_NO3P_CAPTURE_FILTER:-}"
-
+# files/dc/cleanup/trap set up here, before the port pre-checks below, not after: those checks
+# can fail/blind (immediate exit), and a trap registered later would leak this $work directory
+# on that exit -- round 2 review caught this once already introduced.
 files=(-f compose.yaml -f scripts/no-third-party/compose.observe.yaml)
 [ -z "$mutate" ] || files+=(-f "scripts/no-third-party/mutations/compose.$mutate.yaml")
 
@@ -127,6 +124,38 @@ dc() { docker compose -p "$project" "${files[@]}" "$@"; }
 
 cleanup() { dc down >/dev/null 2>&1 || true; rm -rf "$work"; }
 trap cleanup EXIT
+
+if port_free "$port"; then
+    :
+else
+    case $? in
+        1) fail "port $port is already in use (set LINKLING_NO3P_PORT to use another)" ;;
+        *) blind "could not tell whether port $port is free: $PORT_CHECK_MSG" ;;
+    esac
+fi
+if [ "$api_only" = 0 ]; then
+    if port_free "$web_port"; then
+        :
+    else
+        case $? in
+            1) fail "port $web_port is already in use (set LINKLING_NO3P_WEB_PORT to use another)" ;;
+            *) blind "could not tell whether port $web_port is free: $PORT_CHECK_MSG" ;;
+        esac
+    fi
+fi
+
+# Exported, so that they override anything in a .env beside compose.yaml. LINKLING_BIND_ADDR
+# (round-3 review) matters here too: port_free() and $base/$site above all hardcode 127.0.0.1,
+# so a stray LINKLING_BIND_ADDR in a developer's own .env -- unrelated to this script, left
+# over from their own deployment work -- must not reach this run's compose stack.
+export LINKLING_API_KEY="$(rand 24)"
+export LINKLING_DATA_DIR="$data"
+export LINKLING_PORT="$port"
+export LINKLING_WEB_PORT="$web_port"
+export LINKLING_BIND_ADDR=127.0.0.1
+export COMPOSE_PROJECT_NAME="$project"
+# compose.observe.yaml reads this, and compose would otherwise take it from a .env file.
+export LINKLING_NO3P_CAPTURE_FILTER="${LINKLING_NO3P_CAPTURE_FILTER:-}"
 
 echo "project $project, api on $base$([ "$api_only" = 1 ] || echo ", site on $site"), mutation ${mutate:-none}"
 mkdir -p "$captures"
