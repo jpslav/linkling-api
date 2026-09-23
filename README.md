@@ -11,8 +11,10 @@ give in `LINKLING_DB`, and nothing here backs it up for you — see `docs/adr/00
 ## What exists today
 
 Creating a link (with a name you choose or one the service invents, optionally given an
-expiry), following it, and deleting it. Counting, the stats page and the CLI are separate
-pieces of work and are not here yet.
+expiry), following it, and deleting it. Every redirect adds one to that link's count for
+the current UTC day, and that per-link per-day number is all the service's tables hold
+about a click (`docs/adr/0004`, `0014`); deleting a link deletes its counts. The stats page and the
+CLI that read the counts are separate pieces of work and are not here yet.
 
 | | |
 |---|---|
