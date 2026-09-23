@@ -63,6 +63,8 @@ class Observation:
     stdout: str
     stderr: str
     markers: dict[str, str]
+    needles: dict[str, list[str]]
+    days: tuple[str, ...]
 
 
 def _sqlite3_cli() -> str:
@@ -89,13 +91,27 @@ def _follow_once_with_identifying_headers(tmp_path: Path, access_log: bool) -> O
         directory.mkdir(parents=True)
     db = data / "linkling.db"
 
-    tag = secrets.token_hex(6)
+    # Each header carries its own random tag, so a finding names the header it came from.
+    # What is searched for is each whole value *and* a fragment of it, so a partial store
+    # -- a referrer's hostname, a cookie's value without its name, an address with its
+    # last octet zeroed -- is found too: the tag, or for the address the documentation
+    # prefix 203.0.113.0/24 (RFC 5737), which is what an "anonymised" address would keep.
+    ua, ref, cookie = (secrets.token_hex(6) for _ in range(3))
     markers = {
         "X-Forwarded-For": f"203.0.113.{secrets.randbelow(254) + 1}",
-        "User-Agent": f"ua-canary-{tag}",
-        "Referer": f"https://ref-canary-{tag}.example/",
-        "Cookie": f"sid=cookie-canary-{tag}",
+        "User-Agent": f"ua-canary-{ua}",
+        "Referer": f"https://ref-canary-{ref}.example/",
+        "Cookie": f"sid=cookie-canary-{cookie}",
     }
+    needles = {
+        "X-Forwarded-For": [markers["X-Forwarded-For"], "203.0.113."],
+        "User-Agent": [markers["User-Agent"], ua],
+        "Referer": [markers["Referer"], ref],
+        "Cookie": [markers["Cookie"], cookie],
+    }
+    # The UTC day read before and after the run: a follow that straddles midnight lands
+    # in one of the two, and the arrival check accepts either rather than going blind.
+    day_before = counts.utc_day(time.time())
 
     command = [
         sys.executable, "-m", "uvicorn", "--factory", "linkling.server.app:create_app",
@@ -159,16 +175,18 @@ def _follow_once_with_identifying_headers(tmp_path: Path, access_log: bool) -> O
         stdout=stdout_path.read_text(errors="replace"),
         stderr=stderr_path.read_text(errors="replace"),
         markers=markers,
+        needles=needles,
+        days=tuple(sorted({day_before, counts.utc_day(time.time())})),
     )
 
 
 def _establish_the_request_arrived(seen: Observation) -> str:
     """Steps 1-3. Returns the dump. Any failure here is blind, never a pass."""
-    today = counts.utc_day(time.time())
+    days = ", ".join(f"'{day}'" for day in seen.days)
     arrived = _sqlite3(
         seen.db,
-        "SELECT daily_counts.count FROM daily_counts JOIN links "
-        f"ON links.id = daily_counts.link_id WHERE links.name = 'q3-plan' AND day = '{today}'",
+        "SELECT SUM(daily_counts.count) FROM daily_counts JOIN links "
+        f"ON links.id = daily_counts.link_id WHERE links.name = 'q3-plan' AND day IN ({days})",
     ).strip()
     if arrived != "1":
         _blind(
@@ -177,7 +195,9 @@ def _establish_the_request_arrived(seen: Observation) -> str:
         )
 
     dump = _sqlite3(seen.db, ".dump")
-    if "q3-plan" not in dump or not re.search(rf"'{today}',1\)", dump):
+    if "q3-plan" not in dump or not any(
+        re.search(rf"'{day}',1\)", dump) for day in seen.days
+    ):
         _blind("dump is not the service's database -- it lacks the link or its count")
 
     if "Uvicorn running on" not in seen.stderr:
@@ -201,9 +221,9 @@ def _where_markers_appear(seen: Observation, dump: str) -> list[tuple[str, str]]
         f"no-trace: examined {len(places) - 1} files ({walked_bytes} bytes) under "
         f"{seen.root} plus the sqlite3 dump ({len(dump)} chars)"
     )
-    for header, marker in seen.markers.items():
+    for header, needles in seen.needles.items():
         for place, data in places.items():
-            if marker.encode() in data:
+            if any(needle.encode() in data for needle in needles):
                 found.append((header, place))
     return found
 

@@ -26,6 +26,17 @@ from linkling.server import counts
 from linkling.server import links as links_module
 
 
+#: Every test here counts at this one instant (2026-09-23T12:00:00Z) unless it drives the
+#: clock itself, so no assertion can straddle a real midnight UTC between two reads.
+FIXED_INSTANT = 1790164800.0
+TODAY = counts.utc_day(FIXED_INSTANT)
+
+
+@pytest.fixture(autouse=True)
+def _fixed_clock(monkeypatch):
+    monkeypatch.setattr(counts, "_epoch_seconds", lambda: FIXED_INSTANT)
+
+
 def _rows(db_path) -> list[tuple[str, str, int]]:
     """Every row of `daily_counts`, joined to its link's name, straight from the file."""
     conn = sqlite3.connect(str(db_path))
@@ -48,7 +59,7 @@ def _all_count_rows(db_path) -> list[tuple]:
 
 
 def _count(db_path, name: str, day: str | None = None) -> int | None:
-    day = counts.utc_day(time.time()) if day is None else day
+    day = TODAY if day is None else day
     for row_name, row_day, row_count in _rows(db_path):
         if row_name == name and row_day == day:
             return row_count
@@ -197,7 +208,7 @@ def test_many_follows_in_one_day_are_one_row(client, make_link, db_path):
     make_link(name="q3-plan")
     for _ in range(25):
         assert client.get("/q3-plan").status_code == 302
-    today = counts.utc_day(time.time())
+    today = TODAY
     assert _rows(db_path) == [("q3-plan", today, 25)]
 
 
@@ -224,7 +235,7 @@ def test_deleting_a_link_removes_its_counts_and_only_its_counts(
     make_link(name="keep-me")
     for name in ("q3-plan", "q3-plan", "keep-me"):
         assert client.get(f"/{name}").status_code == 302
-    today = counts.utc_day(time.time())
+    today = TODAY
     assert _rows(db_path) == [("keep-me", today, 1), ("q3-plan", today, 2)], (
         "blind: the counts were not there before the delete, so their absence after it "
         "would prove nothing"
