@@ -57,8 +57,14 @@ class Link:
     expired: bool
 
 
+#: The one shape every timestamp this service stores or accepts is written in. A single
+#: constant here, rather than a copy beside each user, is what keeps `_now()`'s output and
+#: `app.py`'s `expires` validation from drifting into two shapes that happen to agree today.
+TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(timezone.utc).strftime(TIMESTAMP_FORMAT)
 
 
 def create(
@@ -126,8 +132,8 @@ def lookup(conn: sqlite3.Connection, name: str) -> Link | None:
     ``expires_at`` is compared with ``<=``, not ``<``, which
     reads "expires at T" as "no longer valid from T", the same sense `Expires`/`Max-Age`
     give a cookie or an HTTP cache entry. ISO-8601 UTC in this exact shape
-    (``%Y-%m-%dT%H:%M:%SZ``) sorts lexicographically in time order, so the comparison is a
-    plain string compare -- no parsing, and SQLite does it without a custom function.
+    (``TIMESTAMP_FORMAT``) sorts lexicographically in time order, so the comparison below
+    is a plain Python string compare against ``_now()`` -- no parsing, no SQL function.
     """
     row = conn.execute(
         "SELECT name, target, deleted_at, expires_at FROM links WHERE name = ?", (name,)

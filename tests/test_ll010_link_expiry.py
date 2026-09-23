@@ -134,20 +134,32 @@ def test_omitting_expires_stores_null(client, auth, target, db_path):
 @pytest.mark.parametrize(
     "bad",
     [
-        "7d",
-        "2026-01-01",
-        "2026-01-01 00:00:00Z",
-        "2026-01-01T00:00:00+00:00",
-        "2026-01-01T00:00:00",
-        "2026-01-01T00:00:00.000Z",
-        "not-a-date",
-        "",
+        pytest.param("7d", id="cli-style-duration"),
+        pytest.param("2030-01-01", id="date-only"),
+        pytest.param("2030-01-01 00:00:00Z", id="space-not-t"),
+        pytest.param("2030-01-01T00:00:00+00:00", id="numeric-offset"),
+        pytest.param("2030-01-01T00:00:00", id="no-z"),
+        pytest.param("2030-01-01T00:00:00.000Z", id="fractional-seconds"),
+        pytest.param("not-a-date", id="garbage"),
+        pytest.param("", id="empty"),
+        # `strptime` parses these -- verified by running it -- but none is the shape
+        # `_now()` ever prints, and `links.lookup`'s boundary check is a plain string
+        # compare that depends on every stored value sharing that one shape.
+        pytest.param("2030-1-01T00:00:00Z", id="single-digit-month"),
+        pytest.param("2030-01-01t00:00:00z", id="lowercase-literals"),
+        pytest.param("2030-01- 5T00:00:00Z", id="space-padded-day"),
+        pytest.param("۲۰۳۰-01-01T00:00:00Z", id="extended-arabic-indic-digits"),
+        pytest.param("２０３０-01-01T00:00:00Z", id="fullwidth-digits"),
     ],
 )
 def test_expires_must_be_an_iso_8601_utc_timestamp_shaped_like_created_at(
     client, auth, target, bad
 ):
-    """ADR-0013: only the exact shape `created_at` is stored and printed in is accepted."""
+    """ADR-0013: only the exact shape `created_at` is stored and printed in is accepted --
+    not merely a shape `strptime` can parse. Every value here names a year in 2030, so a
+    build that fixed the shape check but not the future-only check (or vice versa) cannot
+    make this pass for the wrong reason.
+    """
     response = client.post(
         "/-/api/links",
         json={"url": target, "name": "bad-expiry", "expires": bad},
@@ -155,6 +167,48 @@ def test_expires_must_be_an_iso_8601_utc_timestamp_shaped_like_created_at(
     )
     assert response.status_code == 422, (bad, response.status_code, response.text)
     assert client.get("/bad-expiry").status_code == 404
+
+
+def test_expires_in_the_past_is_refused_rather_than_creating_a_dead_on_arrival_link(
+    client, auth, target, monkeypatch
+):
+    """Without this, a typo'd year makes a link that is 410 from its first follow, with
+    its name reserved forever exactly as ADR-0005 reserves one after any other mistake.
+    """
+    monkeypatch.setattr(links_module, "_now", lambda: "2026-06-01T00:00:00Z")
+
+    response = client.post(
+        "/-/api/links",
+        json={"url": target, "name": "already-gone", "expires": "2026-05-31T23:59:59Z"},
+        headers=auth,
+    )
+    assert response.status_code == 422, response.text
+    assert client.get("/already-gone").status_code == 404
+
+    at_the_boundary = client.post(
+        "/-/api/links",
+        json={"url": target, "name": "also-already-gone", "expires": "2026-06-01T00:00:00Z"},
+        headers=auth,
+    )
+    assert at_the_boundary.status_code == 422, at_the_boundary.text
+
+
+def test_a_tombstoned_links_expiry_is_left_as_it_was(
+    client, auth, make_link, monkeypatch, db_path
+):
+    """Pinned, not decided here: ADR-0005 lists `target`, `created_by` and counts as what
+    a tombstone drops, and says nothing about `expires_at`. This asserts today's actual
+    behaviour (it survives) so a change to it is a visible diff rather than a silent one.
+    """
+    monkeypatch.setattr(links_module, "_now", lambda: "2026-01-01T00:00:00Z")
+    make_link(name="q3-plan", expires="2026-12-31T23:59:59Z")
+    assert client.delete("/-/api/links/q3-plan", headers=auth).status_code == 204
+
+    with sqlite3.connect(db_path) as conn:
+        stored = conn.execute(
+            "SELECT expires_at FROM links WHERE name = 'q3-plan'"
+        ).fetchone()[0]
+    assert stored == "2026-12-31T23:59:59Z"
 
 
 def test_an_expired_link_can_still_be_deleted(client, auth, make_link, monkeypatch):

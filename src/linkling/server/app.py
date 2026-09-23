@@ -172,13 +172,6 @@ async def _too_large(send, limit: int) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
-#: ADR-0013: the shape `created_at`/`expires_at` are stored and printed in, and the only
-#: shape `expires` is accepted in. ISO-8601 UTC in this exact form sorts lexicographically
-#: in time order, which is what lets the boundary check in `links.lookup` stay a plain
-#: string comparison.
-_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-
-
 class CreateLink(BaseModel):
     """The create request.
 
@@ -219,23 +212,44 @@ def _validate_target(raw: str) -> str:
 
 
 def _validate_expires(raw: str | None) -> str | None:
-    """ADR-0013: `expires` must be an ISO-8601 UTC timestamp in `_TIMESTAMP_FORMAT`.
+    """ADR-0013: `expires` must be an ISO-8601 UTC timestamp in `links.TIMESTAMP_FORMAT`,
+    strictly after the moment of the call.
 
     Parsed with `strptime` rather than `datetime.fromisoformat`: `fromisoformat` accepts
-    shapes `_TIMESTAMP_FORMAT` does not print (no seconds, a numeric offset, no `Z` at
-    all), and a value the service would never itself produce is one `links.lookup`'s plain
-    string comparison against `expires_at` cannot be trusted to order correctly.
+    shapes `TIMESTAMP_FORMAT` does not print (no seconds, a numeric offset, no `Z` at all).
+    `strptime` alone is not enough either -- verified by driving it, not by reading its
+    docs: it accepts 1- and 2-digit months/days/hours, a space-padded day, lowercase `t`/`z`
+    (its literals match case-insensitively) and non-ASCII decimal digits (Arabic-Indic,
+    fullwidth), storing whichever spelling it was given. `links.lookup`'s expiry check is a
+    plain string comparison that depends on every stored value sharing one shape, so a
+    value in a shape the service would never itself print breaks that ordering silently
+    rather than loudly -- `"2026-01- 5T00:00:00Z"` sorts *before* every real January date
+    despite naming the 5th, because a space sorts below every digit. Round-tripping the
+    parsed value back through `strftime` and requiring it to reproduce the input catches
+    every one of those, because `strftime` only ever emits the one canonical shape.
+
+    Rejecting an already-past instant is separate from the shape check: without it, a typo'd
+    year creates a link that is `410` from its very first follow, with its name reserved
+    forever exactly as ADR-0005 reserves one after any other mistaken create.
     """
     if raw is None:
         return None
     try:
-        datetime.strptime(raw, _TIMESTAMP_FORMAT)
+        parsed = datetime.strptime(raw, links.TIMESTAMP_FORMAT)
     except ValueError as exc:
         raise HTTPException(
             422,
             "expires must be an ISO-8601 UTC timestamp shaped like "
             "2026-01-01T00:00:00Z.",
         ) from exc
+    if parsed.strftime(links.TIMESTAMP_FORMAT) != raw:
+        raise HTTPException(
+            422,
+            "expires must be an ISO-8601 UTC timestamp shaped like "
+            "2026-01-01T00:00:00Z.",
+        )
+    if raw <= links._now():
+        raise HTTPException(422, "expires must be in the future.")
     return raw
 
 

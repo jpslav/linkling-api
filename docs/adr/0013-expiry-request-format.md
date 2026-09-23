@@ -37,10 +37,20 @@ stays "an ISO-8601 UTC instant after which this link is gone" — one shape, mat
 other timestamp this service stores.
 
 Concretely: `POST /-/api/links` accepts an optional `expires` field in the exact shape
-`created_at` is rendered in (`%Y-%m-%dT%H:%M:%SZ`). A value that does not parse in that
-shape is refused with `422`, the same status ADR-0011b already uses for a request the
-service cannot honor. Omitting `expires` still means forever — the owner's `expiry = A`
-answer, unaffected by this ADR.
+`created_at` is rendered in (`%Y-%m-%dT%H:%M:%SZ`) — checked by round-tripping the parsed
+value back through the same formatter and requiring it to reproduce the input byte-for-byte,
+because a permissive parser is not the same guarantee as an exact shape: `datetime.strptime`
+alone accepts a single-digit month, a space-padded day, lowercase literals and non-ASCII
+decimal digits, none of which `_now()` ever prints, and the follow path's boundary check
+depends on every stored value sharing one shape to sort correctly as plain strings. A value
+that does not reproduce is refused with `422`, the same status ADR-0011b already uses for a
+request the service cannot honor.
+
+`expires` must also name an instant strictly after the moment of the call, refused with
+`422` otherwise. Without this, a mistyped year creates a link that answers `410` from its
+very first follow, its name reserved forever exactly as ADR-0005 reserves one after any
+other mistaken create — there is no undo once the row exists. Omitting `expires` still
+means forever — the owner's `expiry = A` answer, unaffected by this ADR.
 
 **What would settle it:** LL-003 is where a relative convenience actually gets built; if
 that item finds the client-side conversion awkward, or a second caller besides the CLI
@@ -58,3 +68,10 @@ repo for when a thing earns its own mechanism.
   already gotten right at write time.
 - Widening the accepted format later (a bare date, a duration suffix) is additive;
   today's exact shape does not need to be un-accepted for that to happen.
+
+**Left open, named rather than decided here:** ADR-0005's tombstone lists `target`,
+`created_by` and daily counts as what a delete drops; it says nothing about `expires_at`,
+which did not functionally exist when it was written. This item leaves a tombstoned link's
+`expires_at` exactly as it was (pinned by a test, not changed), rather than deciding by
+implication whether ADR-0005's "a tombstone stores only a name and a date" should now read
+as "and its dates."
