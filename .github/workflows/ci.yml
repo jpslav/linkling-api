@@ -16,3 +16,14 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[test]"
       - run: pytest -q
+
+  # The compose stack's service, started from nothing on Linux: it answers, a link survives
+  # `down` and `up`, the documented backup is sound, and the logs hold no client address
+  # (scripts/compose-smoke.sh). Linux is also where the bind mount's root ownership bites,
+  # which Docker Desktop hides (ADR-0015 ii).
+  compose:
+    name: compose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/compose-smoke.sh

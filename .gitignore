@@ -17,3 +17,9 @@ data/
 *.db
 *.db-wal
 *.db-shm
+
+# The team key (LINKLING_API_KEY) goes in a .env beside compose.yaml, and never into git.
+.env
+
+# The throwaway data directories scripts/compose-smoke.sh creates, one per run.
+.smoke-data/

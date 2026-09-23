@@ -1,0 +1,47 @@
+# The whole Linkling stack: `docker compose up -d`. The topology is ADR-0007 and how this file
+# is assembled is ADR-0015. The README's "Run it with Docker" has the names below and what
+# each one is for.
+
+services:
+  api:
+    build: .
+    environment:
+      # Required, and never defaulted anywhere: the service would refuse an empty key anyway
+      # (config.py), and this makes compose say so before anything starts.
+      LINKLING_API_KEY: ${LINKLING_API_KEY:?set LINKLING_API_KEY (the team key) in your environment or in a .env file beside compose.yaml}
+      LINKLING_DB: /data/linkling.db
+    volumes:
+      # A bind mount, not a named volume (ADR-0007a): the database is a file with a path you
+      # can see and back up, and `docker compose down -v` does not touch it.
+      - ${LINKLING_DATA_DIR:-./data}:/data
+    ports:
+      - "${LINKLING_PORT:-8000}:8000"
+    restart: unless-stopped
+    healthcheck:
+      # There is no health route yet. Nothing answers GET on /-/api/links, so the app's
+      # 405 there means it is up. Any status below 500 counts, and the check touches neither
+      # the database nor any link.
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import urllib.error, urllib.request
+          try:
+              urllib.request.urlopen("http://127.0.0.1:8000/-/api/links", timeout=2)
+          except urllib.error.HTTPError as e:
+              raise SystemExit(e.code >= 500)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+
+  web:
+    # The public site, from a checkout of linkling-web beside this one (ADR-0015 i).
+    build: ${LINKLING_WEB_DIR:-../linkling-web}
+    volumes:
+      - ./deploy/nginx-privacy.conf:/etc/nginx/conf.d/00-privacy.conf:ro
+    ports:
+      - "${LINKLING_WEB_PORT:-8080}:80"
+    restart: unless-stopped

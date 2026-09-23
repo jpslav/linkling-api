@@ -15,4 +15,5 @@
 | [0012](0012-asgi-server-uvicorn.md) | uvicorn is the ASGI server, and the only new runtime dependency | Accepted |
 | [0013](0013-expiry-request-format.md) | The create request's expiry value is an absolute ISO-8601 UTC timestamp, not a relative duration | Proposed |
 | [0014](0014-daily-counts-table-shape.md) | daily_counts is a WITHOUT ROWID table keyed by (link, UTC day), its counts die with their link by trigger, and a follow is counted by one guarded upsert | Proposed |
+| [0015](0015-compose-assembly.md) | How the compose file is assembled: the site's source, the service's user, logging, and origins | Proposed |
 <!-- adr-index:end -->
