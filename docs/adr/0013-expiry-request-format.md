@@ -11,10 +11,10 @@ adding it is additive, but it does not say what a caller puts *in* that field. T
 places in this program already lean on a shape for it without deciding one:
 `questions/2026-09-17-cli-verbs-and-privacy-manifest.md` sketches the CLI (LL-003,
 unbuilt) as `linkling make <url> [--expires 7d]` — a relative duration, convenient at a
-terminal — while migration `0001_links.sql` types `expires_at TEXT NULL` with the comment
-"ISO-8601 UTC", identical to how `created_at` is typed and stored. Something has to turn
-one shape into the other, and where that conversion happens is what this ADR fixes before
-the follow path's boundary check is written against it.
+terminal — while migration `0001_links.sql` types `expires_at TEXT NULL` identically to
+`created_at TEXT NOT NULL`, the sibling column whose own comment reads "ISO-8601 UTC".
+Something has to turn one shape into the other, and where that conversion happens is what
+this ADR fixes before the follow path's boundary check is written against it.
 
 ## Decision
 
