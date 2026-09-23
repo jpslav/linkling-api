@@ -31,6 +31,7 @@ be seen. The container's log driver and any reverse proxy are LL-005's and ADR-0
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import secrets
@@ -63,7 +64,7 @@ class Observation:
     stdout: str
     stderr: str
     markers: dict[str, str]
-    needles: dict[str, list[str]]
+    needles: dict[str, list[str | bytes]]
     days: tuple[str, ...]
 
 
@@ -103,8 +104,14 @@ def _follow_once_with_identifying_headers(tmp_path: Path, access_log: bool) -> O
         "Referer": f"https://ref-canary-{ref}.example/",
         "Cookie": f"sid=cookie-canary-{cookie}",
     }
+    address = ipaddress.IPv4Address(markers["X-Forwarded-For"])
     needles = {
-        "X-Forwarded-For": [markers["X-Forwarded-For"], "203.0.113."],
+        "X-Forwarded-For": [
+            markers["X-Forwarded-For"],
+            "203.0.113.",
+            str(int(address)),  # the address stored as an integer
+            address.packed,  # ... or as its four raw bytes
+        ],
         "User-Agent": [markers["User-Agent"], ua],
         "Referer": [markers["Referer"], ref],
         "Cookie": [markers["Cookie"], cookie],
@@ -221,9 +228,16 @@ def _where_markers_appear(seen: Observation, dump: str) -> list[tuple[str, str]]
         f"no-trace: examined {len(places) - 1} files ({walked_bytes} bytes) under "
         f"{seen.root} plus the sqlite3 dump ({len(dump)} chars)"
     )
+    # Text needles are matched case-insensitively (a value upper-cased on the way in is
+    # still found); a bytes needle -- the packed address -- is matched exactly.
     for header, needles in seen.needles.items():
         for place, data in places.items():
-            if any(needle.encode() in data for needle in needles):
+            folded = data.lower()
+            if any(
+                needle in data if isinstance(needle, bytes)
+                else needle.lower().encode() in folded
+                for needle in needles
+            ):
                 found.append((header, place))
     return found
 
