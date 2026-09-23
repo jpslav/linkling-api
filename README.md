@@ -10,20 +10,22 @@ give in `LINKLING_DB`, and nothing here backs it up for you — see `docs/adr/00
 
 ## What exists today
 
-Creating a link (with a name you choose or one the service invents), following it, and
-deleting it. Counting, expiry, the stats page and the CLI are separate pieces of work and
-are not here yet.
+Creating a link (with a name you choose or one the service invents, optionally given an
+expiry), following it, and deleting it. Counting, the stats page and the CLI are separate
+pieces of work and are not here yet.
 
 | | |
 |---|---|
-| `POST /-/api/links` | `{"url": …, "name": …?, "created_by": …?}` → `201 {"name", "url"}`. Needs the team key. |
+| `POST /-/api/links` | `{"url": …, "name": …?, "created_by": …?, "expires": …?}` → `201 {"name", "url"}`. Needs the team key. |
 | `DELETE /-/api/links/<name>` | `204`. Needs the team key. A deleted name stays reserved forever. |
 | `GET\|HEAD /<name>` | `302` to the long URL with `Cache-Control: no-store`. No credential, no cookie. |
 
-Unknown names answer `404`, deleted ones `410`, and every response the application
-produces carries `Cache-Control: no-store` — a 500 from the framework's own error handler
-is the one exception, and 500 is not a cacheable status. The decisions are in
-`docs/adr/0001`, `0003`, `0005` and `0006`.
+Unknown names answer `404`; deleted or expired ones, `410`; and every response the
+application produces carries `Cache-Control: no-store` — a 500 from the framework's own
+error handler is the one exception, and 500 is not a cacheable status. `expires` is an
+ISO-8601 UTC timestamp strictly in the future, shaped like `2026-01-01T00:00:00Z`
+(`docs/adr/0013`); omitted, a link never expires. The decisions are in `docs/adr/0001`,
+`0003`, `0005`, `0006` and `0013`.
 
 ## Run it locally
 
