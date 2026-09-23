@@ -24,17 +24,24 @@ WORKDIR /app
 # The hashed dependency install is copied and run before the source, so a source-only change
 # invalidates only the cheap layers below it, not this one -- pip re-verifying 13 packages'
 # worth of hashes on every one-line src/ edit would make the build slow for no reason.
-COPY pyproject.toml requirements.lock.txt ./
-RUN pip install --no-cache-dir --require-hashes -r requirements.lock.txt
+# requirements-build.lock.txt (round-2 review) locks the PEP-517 build backend itself
+# (setuptools, from pyproject.toml's [build-system] requires): without it and without
+# --no-build-isolation below, pip fetches setuptools fresh, unhashed, into a throwaway build
+# env on every image build -- a real gap in the reproducibility ADR-0017 exists to close,
+# confirmed by running this install with --network=none and watching it fail needing network.
+COPY pyproject.toml requirements.lock.txt requirements-build.lock.txt ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock.txt -r requirements-build.lock.txt
 
 COPY src ./src
 COPY scripts/no-forbidden-imports-check.sh /tmp/no-forbidden-imports-check.sh
 # requirements.lock.txt above already pins everything pyproject.toml declares, so this install
-# takes no deps of its own -- it is --require-hashes that forces the two installs apart
-# (ADR-0017 ii): it refuses an unhashed local source install in the same invocation. The guard
+# takes no deps of its own -- it is --require-hashes on the first install that forces the two
+# installs apart (ADR-0017 ii): it refuses an unhashed local source install in the same
+# invocation. --no-build-isolation makes this use the setuptools already installed above
+# (hash-verified) instead of pip fetching its own unpinned copy into an isolated env. The guard
 # (LL-022) runs last, against the image as it will ship, and fails the build if it finds
 # websockets or wsproto.
-RUN pip install --no-cache-dir --no-deps . \
+RUN pip install --no-cache-dir --no-deps --no-build-isolation . \
     && bash /tmp/no-forbidden-imports-check.sh \
     && rm /tmp/no-forbidden-imports-check.sh
 

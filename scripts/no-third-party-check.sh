@@ -114,6 +114,17 @@ control_port=9
 control_name="linkling-control-$(rand 8).invalid"
 work="$(mktemp -d)"
 
+# files/dc/cleanup/trap set up here, before the port pre-checks below, not after: those checks
+# can fail/blind (immediate exit), and a trap registered later would leak this $work directory
+# on that exit -- round 2 review caught this once already introduced.
+files=(-f compose.yaml -f scripts/no-third-party/compose.observe.yaml)
+[ -z "$mutate" ] || files+=(-f "scripts/no-third-party/mutations/compose.$mutate.yaml")
+
+dc() { docker compose -p "$project" "${files[@]}" "$@"; }
+
+cleanup() { dc down >/dev/null 2>&1 || true; rm -rf "$work"; }
+trap cleanup EXIT
+
 if port_free "$port"; then
     :
 else
@@ -141,14 +152,6 @@ export LINKLING_WEB_PORT="$web_port"
 export COMPOSE_PROJECT_NAME="$project"
 # compose.observe.yaml reads this, and compose would otherwise take it from a .env file.
 export LINKLING_NO3P_CAPTURE_FILTER="${LINKLING_NO3P_CAPTURE_FILTER:-}"
-
-files=(-f compose.yaml -f scripts/no-third-party/compose.observe.yaml)
-[ -z "$mutate" ] || files+=(-f "scripts/no-third-party/mutations/compose.$mutate.yaml")
-
-dc() { docker compose -p "$project" "${files[@]}" "$@"; }
-
-cleanup() { dc down >/dev/null 2>&1 || true; rm -rf "$work"; }
-trap cleanup EXIT
 
 echo "project $project, api on $base$([ "$api_only" = 1 ] || echo ", site on $site"), mutation ${mutate:-none}"
 mkdir -p "$captures"
