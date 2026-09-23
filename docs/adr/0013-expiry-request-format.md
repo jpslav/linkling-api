@@ -54,9 +54,8 @@ means forever — the owner's `expiry = A` answer, unaffected by this ADR.
 
 **What would settle it:** LL-003 is where a relative convenience actually gets built; if
 that item finds the client-side conversion awkward, or a second caller besides the CLI
-wants duration math, that is grounds to revisit. One drafted caller wanting a
-convenience is not yet the "two implementations" signal ADR-0002 uses elsewhere in this
-repo for when a thing earns its own mechanism.
+wants duration math, that is grounds to revisit. One drafted, unbuilt caller wanting a
+convenience is not yet two real callers needing the same mechanism.
 
 ## Consequences
 

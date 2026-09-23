@@ -55,10 +55,11 @@ def test_a_head_request_on_an_expired_link_is_also_410(
 def test_a_link_expiring_at_exactly_now_is_already_gone(
     client, auth, make_link, target, monkeypatch
 ):
-    """The boundary: `expires_at` is compared with `<=`, so "expires at T" reads as "no
-    longer valid from T" -- the same sense a cookie or a cache entry gives its own
-    Expires/Max-Age. One second before the boundary the link is still live; asked again
-    at the boundary itself, with nothing else changed, it is gone.
+    """The boundary: `expires_at` is compared with `<=`, matching a JWT's `exp` claim
+    (RFC 7519 4.1.4: "on or after which the JWT MUST NOT be accepted"), not a cookie's
+    `Expires` (RFC 6265 5.3: expired only once "in the past" -- still good at the instant
+    named). One second before the boundary the link is still live; asked again at the
+    boundary itself, with nothing else changed, it is gone.
     """
     monkeypatch.setattr(links_module, "_now", lambda: "2026-06-01T00:00:00Z")
     make_link(name="boundary", expires="2026-06-01T00:00:10Z")
@@ -156,9 +157,10 @@ def test_expires_must_be_an_iso_8601_utc_timestamp_shaped_like_created_at(
     client, auth, target, bad
 ):
     """ADR-0013: only the exact shape `created_at` is stored and printed in is accepted --
-    not merely a shape `strptime` can parse. Every value here names a year in 2030, so a
-    build that fixed the shape check but not the future-only check (or vice versa) cannot
-    make this pass for the wrong reason.
+    not merely a shape `strptime` can parse. Every value that names a date at all names one
+    in 2030, so a build that fixed the shape check but not the future-only check (or vice
+    versa) cannot make one of those cases pass for the wrong reason; `"7d"`, `""` and
+    `"not-a-date"` name no date and are rejected before either check would matter.
     """
     response = client.post(
         "/-/api/links",

@@ -141,11 +141,13 @@ def lookup(conn: sqlite3.Connection, name: str) -> Link | None:
     ``expired`` is decided here, against ``_now()``, rather than stored: a link is either
     past its ``expires_at`` or it is not, at the moment it is looked up, and there is no
     column to write it into. A link expiring at exactly ``_now()`` is expired:
-    ``expires_at`` is compared with ``<=``, not ``<``, which
-    reads "expires at T" as "no longer valid from T", the same sense `Expires`/`Max-Age`
-    give a cookie or an HTTP cache entry. ISO-8601 UTC in this exact shape
-    (``TIMESTAMP_FORMAT``) sorts lexicographically in time order, so the comparison below
-    is a plain Python string compare against ``_now()`` -- no parsing, no SQL function.
+    ``expires_at`` is compared with ``<=``, not ``<``, matching RFC 7519 SS4.1.4's own
+    ``exp`` claim -- "the expiration time on or after which the JWT MUST NOT be accepted"
+    -- rather than RFC 6265 SS5.3's cookie, which reads the opposite way ("'expired' if the
+    cookie has an expiry date in the past", so a cookie is still good exactly at its own
+    Expires instant). ISO-8601 UTC in this exact shape (``TIMESTAMP_FORMAT``) sorts
+    lexicographically in time order, so the comparison below is a plain Python string
+    compare against ``_now()`` -- no parsing, no SQL function.
     """
     row = conn.execute(
         "SELECT name, target, deleted_at, expires_at FROM links WHERE name = ?", (name,)

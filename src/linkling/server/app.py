@@ -175,8 +175,10 @@ async def _too_large(send, limit: int) -> None:
 class CreateLink(BaseModel):
     """The create request.
 
-    ``extra="forbid"`` is deliberate: a caller who sends ``expires`` to a service that
-    does not have it yet gets a 422 instead of a link that silently never expires.
+    ``extra="forbid"`` is deliberate (ADR-0011b): a caller who sends a field this build
+    does not yet recognise gets a 422 instead of a silently ignored request -- which is
+    exactly how a caller who sent ``expires`` before LL-010 shipped it would otherwise
+    have gotten a link that silently never expired.
     """
 
     model_config = ConfigDict(extra="forbid")
