@@ -39,7 +39,7 @@ from a checkout of `linkling-web` **beside** this one, so a clean checkout means
 git clone git@github.com:jpslav/linkling-api.git
 git clone git@github.com:jpslav/linkling-web.git
 cd linkling-api
-echo 'LINKLING_API_KEY=a-long-random-team-key' > .env    # git-ignored; never commit it
+echo "LINKLING_API_KEY='a-long-random-team-key'" > .env  # git-ignored; never commit it
 docker compose up -d
 ```
 
