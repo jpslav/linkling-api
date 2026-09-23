@@ -21,15 +21,20 @@ RUN groupadd --system --gid 10001 linkling \
        --home-dir /nonexistent --shell /usr/sbin/nologin linkling
 
 WORKDIR /app
+# The hashed dependency install is copied and run before the source, so a source-only change
+# invalidates only the cheap layers below it, not this one -- pip re-verifying 13 packages'
+# worth of hashes on every one-line src/ edit would make the build slow for no reason.
 COPY pyproject.toml requirements.lock.txt ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock.txt
+
 COPY src ./src
 COPY scripts/no-forbidden-imports-check.sh /tmp/no-forbidden-imports-check.sh
-# Two installs because --require-hashes (ADR-0017 ii) refuses an unhashed local source
-# install in the same invocation; requirements.lock.txt already pins everything pyproject.toml
-# declares, so the second install takes no deps of its own. The guard (LL-022) runs last,
-# against the image as it will ship, and fails the build if it finds websockets or wsproto.
-RUN pip install --no-cache-dir --require-hashes -r requirements.lock.txt \
-    && pip install --no-cache-dir --no-deps . \
+# requirements.lock.txt above already pins everything pyproject.toml declares, so this install
+# takes no deps of its own -- it is --require-hashes that forces the two installs apart
+# (ADR-0017 ii): it refuses an unhashed local source install in the same invocation. The guard
+# (LL-022) runs last, against the image as it will ship, and fails the build if it finds
+# websockets or wsproto.
+RUN pip install --no-cache-dir --no-deps . \
     && bash /tmp/no-forbidden-imports-check.sh \
     && rm /tmp/no-forbidden-imports-check.sh
 

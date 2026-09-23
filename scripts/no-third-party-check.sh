@@ -88,18 +88,8 @@ fi
 
 rand() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
 
-# LL-021 (carried from w-LL-018): see the identical function in scripts/compose-smoke.sh for
-# why. Free (0) only on an actively refused connect; anything else is blind, exit 2.
-port_free() {
-    local out
-    if out="$( (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>&1 )"; then
-        return 1
-    fi
-    case "$out" in
-        *"Connection refused"*) return 0 ;;
-        *) PORT_CHECK_MSG="$out"; return 2 ;;
-    esac
-}
+# shellcheck source=lib/port-check.sh
+. scripts/lib/port-check.sh
 
 project="${LINKLING_NO3P_PROJECT:-linkling-no3p}"
 port="${LINKLING_NO3P_PORT:-18100}"
