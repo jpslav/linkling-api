@@ -1,7 +1,9 @@
 """LL-004 -- a request carrying identifying headers leaves no trace of them.
 
-The service runs here as a **separate process**, started with the flags of the README's
-"Run it locally" command and `--port 0` so the kernel picks the port. Its `cwd`, `HOME`,
+The service runs here as a **separate process**. It is started as the README's "Run it
+locally" command starts it (`--factory linkling.server.app:create_app`, `--host
+127.0.0.1`, `--no-access-log`), except that it runs as `python -m uvicorn` and uses
+`--port 0` so the kernel picks the port. Its `cwd`, `HOME`,
 `TMPDIR` and `LINKLING_DB` are all inside a fresh temporary directory, and its stdout and
 stderr are each captured to a file. A link is followed once with an `X-Forwarded-For`, a
 `User-Agent`, a `Referer` and a cookie, each carrying a marker unique to this run. Then,
@@ -11,8 +13,10 @@ in this order, and only in this order:
 2. **The right, current database.** Its `.dump` contains the link *and* that count.
 3. **The capture works.** Captured stderr holds uvicorn's `Uvicorn running on` line.
 4. **Only then, the search.** No marker appears in the dump, in the raw bytes of any file
-   under the temporary directory (the database and its `-wal`/`-shm`, freed pages
-   included), or in the captured stdout or stderr.
+   under the temporary directory, or in the captured stdout or stderr. The files include
+   the database file with its freed pages. The service is stopped before the walk, and
+   its last connection checkpoints and removes its own `-wal`. The `-wal`/`-shm` files
+   the walk does see are the ones the `sqlite3` CLI opened in step 1.
 
 Pass is a green test. Fail is an assertion naming the marker and where it was found.
 **Blind is a failure whose message begins ``NO-TRACE BLIND:``** -- steps 1-3 failing, the

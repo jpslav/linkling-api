@@ -435,7 +435,8 @@ def create_app(config: Config | None = None) -> FastAPI:
         ambiguous in a way nobody would remember.
 
         Every redirect is counted, once, before it is sent: ADR-0004's decision record
-        counts every request that follows a link, inspecting nothing -- so ``HEAD`` too --
+        (``docs/adr/0004-click-record-contents.md:89``) counts every request that follows a
+        link, inspecting nothing -- so ``HEAD`` too --
         and ADR-0005 makes the increment synchronous.
         Only the folded name reaches the counter -- nothing about the request does.
         """

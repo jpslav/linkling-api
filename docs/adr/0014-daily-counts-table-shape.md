@@ -33,9 +33,9 @@ and `src/linkling/server/counts.py`. No field beyond ADR-0005's three is added.
 
 | Choice | Recommended | Alternative | Why |
 |---|---|---|---|
-| Row storage | **`WITHOUT ROWID`** | an ordinary rowid table (ADR-0005's sketch as printed) | Rowids are assigned in insertion order. In a rowid table they would order each link's first click of a day against every other link's, which is finer than a day. `WITHOUT ROWID` stores rows by the key alone. |
+| Row storage | **`WITHOUT ROWID`** | an ordinary rowid table (ADR-0005's sketch as printed) | Rowids are assigned in insertion order. In a rowid table they would order each link's first click of a day against every other link's, which is finer than a day. `WITHOUT ROWID` stores rows by the key alone, so SQL cannot read that order. The file's raw bytes still can: see "Left open" below. |
 | Day encoding | **`TEXT`, `YYYY-MM-DD`, the UTC date** | `INTEGER` days since the epoch | This is the form R-008's verify line compares against (`date -u +%F`) and what a person reading the file with `sqlite3` understands. A `CHECK (day GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]')` refuses a timestamp, which is the exact failure ADR-0004 rejects. |
-| Retention | **A trigger, `daily_counts_die_with_their_link`, `AFTER UPDATE OF deleted_at ON links`** | the same `DELETE` inside `links.delete`, in a transaction | The trigger is atomic with the tombstone by construction and holds for any writer that sets `deleted_at`. It is also visible in the schema, which LL-011's page-versus-schema check reads. |
+| Retention | **A trigger, `daily_counts_die_with_their_link`, `AFTER UPDATE OF deleted_at ON links`** | the same `DELETE` inside `links.delete`, in a transaction | The trigger is atomic with the tombstone by construction. It fires for any `UPDATE` that sets `deleted_at`, whichever code path issues it. It is also visible in the schema, where LL-011's page-versus-schema check (not yet built) can read it. |
 | The increment | **One guarded upsert: `INSERT … SELECT id, ?, 1 FROM links WHERE name = ? AND deleted_at IS NULL ON CONFLICT(link_id, day) DO UPDATE SET count = count + 1`**; when it changes nothing, the follow answers 410 | look the id up, then insert by id | A follow that saw the link live and then lost a race with a delete would otherwise write a count onto the tombstone after the trigger had cleared it. As a single statement, SQLite serialises the two. Every 302 is counted exactly once, and no count exists for a deleted link. |
 | `count >= 1` | **`CHECK`** | none | A row exists only because someone followed the link that day. |
 
@@ -56,8 +56,31 @@ deleted.
 - Deleting a link removes its counts in the same statement. Expiring it does not.
 - A count write that fails makes the follow a 500 rather than an uncounted redirect.
   ADR-0005's synchronous increment already implies this.
-- **Left open, named rather than decided here:** SQLite's freed pages keep deleted bytes
-  (a deleted link's counts, a tombstone's old target) until they are overwritten.
-  `PRAGMA secure_delete` would zero them. If resolving that changes what the privacy page
-  says about retention, it is a promise to people who never agreed to anything, and the
-  owner decides it.
+
+## Left open: what the database file's raw bytes keep
+
+This ADR guarantees what SQL can read. ADR-0004's "nothing finer than a day can ever be
+reconstructed" could also be read to cover the file's raw bytes: a copy of `linkling.db`,
+a backup or a volume snapshot. At that level, SQLite keeps more than the schema shows.
+These are the sites, found in this PR's review (round 2) and confirmed by probes:
+
+1. **Freed cells after the retention trigger.** A deleted link's count records stay in
+   the page's free space until they are overwritten. A probe followed a link five times
+   and deleted it: SQL returned no rows, and the file's bytes still held the record with
+   count 5. `PRAGMA secure_delete=ON` on every connection zeroes freed space.
+2. **Cell order within a page.** SQLite writes a page's cells in insertion order, so the
+   byte offsets give back the order in which links got their first follow of the day.
+   Four links first followed in the order ddd, bbb, aaa, ccc read back as `ddd, aaa, ccc`
+   in true relative order; bbb's cell had moved when its count grew. `secure_delete` does
+   not help. A `VACUUM` rewrites pages in key order, but it has to run repeatedly, and
+   the order it erases is rebuilt the next day.
+3. **WAL frames.** The `-wal` file holds a page image per commit until checkpoint. This
+   service opens a connection per request, and the last connection to close checkpoints
+   and removes the WAL. So the WAL holds this history only while requests overlap. What
+   survives after that is filesystem residue, below SQLite.
+4. **A tombstone's old target** stays in freed space the same way as (1). This predates
+   this ADR (LL-007's tombstone), and `secure_delete` would cover it too.
+
+Whether the promise covers the file's raw bytes decides what the privacy page (LL-012)
+may say. It is a promise to people who never agreed to anything, so the owner decides it.
+This ADR does not.
