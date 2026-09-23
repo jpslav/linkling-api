@@ -46,7 +46,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict
 from starlette.datastructures import MutableHeaders
 
-from . import db, links, names
+from . import counts, db, links, names
 from .config import Config, load_config
 
 #: ADR-0003: the status a live link answers with.
@@ -433,6 +433,11 @@ def create_app(config: Config | None = None) -> FastAPI:
         A query string on the short link is dropped rather than merged into the target
         (ADR-0001e): the target carries its own parameters and merging two query strings is
         ambiguous in a way nobody would remember.
+
+        Every redirect is counted, once, before it is sent: ADR-0004's decision record
+        counts every request that follows a link, inspecting nothing -- so ``HEAD`` too --
+        and ADR-0005 makes the increment synchronous.
+        Only the folded name reaches the counter -- nothing about the request does.
         """
         folded = names.normalise(name)
         link = None if folded is None else links.lookup(conn, folded)
@@ -444,6 +449,12 @@ def create_app(config: Config | None = None) -> FastAPI:
             )
         if link.expired:
             raise HTTPException(GONE_STATUS, "That link has expired.")
+        if not counts.record_follow(conn, folded):
+            # Deleted between the lookup and the increment: answer as the lookup would
+            # have a moment later, so no 302 ever leaves uncounted.
+            raise HTTPException(
+                GONE_STATUS, "That link was deleted. Its name stays reserved."
+            )
         return Response(status_code=REDIRECT_STATUS, headers={"Location": link.target})
 
     return app
