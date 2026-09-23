@@ -6,8 +6,8 @@ would. It is the careful version: it resolves the target's host and fetches only
 address, the usual guard against being pointed at internal ones. That guard is why the check's
 target is a host name and not an address. Pointed at a reserved address, a guarded fetcher
 sends nothing and the check would pass. Given a name, it must look the name up first, and that
-lookup is what the check has to catch and name. The check's target host ends in `.invalid`, so
-the lookup finds nothing and nothing is ever fetched.
+lookup is what the check has to catch and name. The check's target host is a random label
+under example.com, which does not resolve, so the lookup finds nothing and nothing is fetched.
 """
 
 import ipaddress

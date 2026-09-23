@@ -79,12 +79,13 @@ so it does not touch a stack you already run. CI runs it on every pull request.
 send, from before either one starts, while it creates, follows and deletes a link and loads the
 site. Anything but a reply to its own requests fails the run, and so does any DNS lookup. Each
 run also plants a connection and a lookup of its own, and a capture that misses them is
-reported blind rather than clean. It also fetches the site's pages and stylesheet and fails on
-any absolute URL or `<script>` in what they serve. It cannot see routes it does not exercise,
-anything after its window of a few seconds, what a browser does with the pages, or what the
-host does outside the containers. CI runs it with `--api-only`, because CI cannot fetch
-`linkling-web`, and runs it again with a deliberate leak to show that it goes red. Run it with
-the site from a checkout that has `linkling-web` beside it.
+reported blind rather than clean. It also fetches the site's pages and every stylesheet they
+pull in, and fails on any absolute URL, `<script>` or inline event handler in what they serve.
+It cannot see routes it does not exercise, anything after the run ends, what a browser does
+with the pages, what the host does outside the containers, or a proxy you put in front. CI
+runs it with `--api-only`, because CI cannot fetch `linkling-web`, and runs it again with a
+deliberate leak to show that it goes red. Run it with the site from a checkout that has
+`linkling-web` beside it.
 
 ### Where the database lives
 

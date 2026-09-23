@@ -178,7 +178,7 @@ def test_the_resolvers_replies_to_other_queries_are_not_excused_by_the_control()
 
 
 def test_a_lookup_of_the_links_target_host_is_named_in_the_verdict(capsys):
-    host = "no3p-0011223344556677.target.invalid"
+    host = "no3p-0011223344556677.example.com"
     lookup = [
         "09:52:18.000011 lo    In  IP 127.0.0.1.40001 > 127.0.0.11.42804: UDP, length 55",
         f"E..S..@.@.	..........{host}.....",

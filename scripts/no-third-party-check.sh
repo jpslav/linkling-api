@@ -11,16 +11,18 @@
 # `linkling-control-<random>.invalid`. Both must show up in the capture, as must the service's
 # replies to the check, or the run is blind. scripts/no-third-party/classify.py has the rules.
 #
-# The site is also judged by what it serves: `/`, `/privacy.html` and every stylesheet they
-# link are fetched, and their headers and bodies must hold no absolute or protocol-relative
-# URL and no <script>. That is deliberately stricter than "loads nothing": an outbound link a
-# browser would not fetch fails too, until someone adds a reviewed exception here.
+# The site is also judged by what it serves: `/`, `/privacy.html`, and every same-origin
+# stylesheet they pull in through a <link> or an @import, followed to any depth (up to 50
+# answers), are fetched. Their headers and bodies must hold no absolute or protocol-relative
+# URL, no slash spelt as an entity or a CSS escape, no <script> and no inline event handler.
+# That is deliberately stricter than "loads nothing": an outbound link a browser would not
+# fetch fails too, until someone adds a reviewed exception here.
 #
 # What this cannot see, so that nobody reads more into a pass than it holds: routes and paths
 # it does not exercise; anything the services would do after the run's window (on a timer, say);
 # what a browser does with the pages, since no browser runs; what the host or Docker Desktop
 # does outside the containers (the image build, the published-port proxy); and a proxy a
-# deployer puts in front. The README's "Run it with Docker" says the same.
+# deployer puts in front. The README's "Run it with Docker" names the same limits.
 #
 # Usage: scripts/no-third-party-check.sh [--api-only] [--mutate api|web-net|web-page]
 #   --api-only  check only the service. CI uses it, because CI cannot fetch the private
@@ -36,13 +38,17 @@
 #   LINKLING_WEB_DIR        the linkling-web checkout (default ../linkling-web, as compose.yaml)
 # Each run gets a fresh .smoke-data/no3p-run-<random>/, holding the service's database and the
 # captures as tcpdump prints them. It is left behind, as compose-smoke.sh leaves its own: on
-# Linux the database directory ends up owned by the container's uid. The team key is random
-# per run and never printed.
+# Linux the database directory ends up owned by the service's uid, 10001, which the entrypoint
+# chowns it to (deploy/entrypoint.sh). The team key is random per run and never printed, but
+# the kept captures hold it, in the requests they recorded; it is good only for that run's
+# stack, which is gone when the script ends.
 # Two more exist only so the blind states can be shown: LINKLING_NO3P_CAPTURE_FILTER gives
 # tcpdump a filter (one that matches nothing makes the controls go missing), and
-# LINKLING_NO3P_STOP_OBSERVER=api|web stops that observer before its capture is read.
+# LINKLING_NO3P_STOP_OBSERVER=api|web stops that observer before its capture is read. A run
+# with a filter set is blind at best, never `pass`: a filter can keep the controls and drop a leak.
 #
-# Exit status: 0 `pass`, 1 `fail: <what was sent or served>`, 2 `blind: <what was absent>`.
+# Exit status: 0 `pass`, 1 `fail: <what was sent or served>`, 2 `blind: <what was absent>`,
+# 64 for a usage error.
 
 set -euo pipefail
 
@@ -92,10 +98,10 @@ captures="$run/captures"
 canary="no3p-$(rand 8)"
 # A host name, not an address: a fetcher that guards against reserved addresses would skip a
 # TEST-NET target and send nothing, while any fetcher has to look a name up first. It is under
-# example.com, a public suffix, because a guard can also refuse special-use names such as
-# `.invalid` before looking them up. example.com is reserved for documentation (RFC 2606) and
-# this random label under it does not resolve, so even a fetcher that looked it up would
-# reach nobody.
+# example.com, a name with an ordinary public suffix, because a guard can also refuse
+# special-use names such as `.invalid` before looking them up. example.com is reserved for
+# documentation (RFC 2606) and a random label under it does not resolve (measured: getaddrinfo
+# answers "not known"), so even a fetcher that looked it up would reach nobody.
 target_host="$canary.example.com"
 target="http://$target_host/linkling-no3p?q=1"
 base="http://127.0.0.1:$port"
@@ -191,8 +197,9 @@ if [ "$api_only" = 0 ]; then
     [ "$sheets" -ge 1 ] || blind "no stylesheet linked from the site answered 200, so the crawl did not reach it"
     for head in "$work"/site-*.head; do
         n="${head%.head}"
-        # Browsers read `https:/host`, `\\host` and `//host` as absolute too, so any run of
-        # slashes or backslashes counts, after a scheme or on its own. A slash spelt as an
+        # A browser can read `https:/host`, `\\host` and `//host` as another origin too (the
+        # WHATWG URL standard treats \ as / in http(s) URLs), so any run of slashes or
+        # backslashes counts, after a scheme or on its own. A slash spelt as an
         # entity or a CSS escape, a <script>, and an inline event handler (which can fetch()
         # with no <script> at all) count as well.
         hits="$( { grep -oiE '(https?:[/\\]*|[/\\][/\\])[a-z0-9][^"'"'"' )<>]*' "$n.head" "$n.body" || true; \

@@ -1,5 +1,7 @@
 # The observer for scripts/no-third-party-check.sh: tcpdump, and the classifier that judges what
-# it captured. The same base image the service already uses, so the check pulls nothing new.
+# it captured, and refs.py, which lists what the site's pages pull in. The same base image the
+# service already uses, so the check pulls no new image; tcpdump comes from Debian's archive
+# when this is built.
 # It is built and run only by the check; nothing in the shipped stack uses it.
 FROM python:3.12-slim
 

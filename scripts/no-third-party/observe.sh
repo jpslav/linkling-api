@@ -2,8 +2,8 @@
 # Runs tcpdump in the background and keeps the container alive after it stops, so the check can
 # stop the capture with SIGINT (which is what makes tcpdump flush and report its kernel drops)
 # and still read the capture out of this container afterwards.
-#   $1  the tcpdump filter expression; empty means every packet. The check passes a
-#       non-empty one only to prove that a capture which sees nothing is reported blind.
+#   $1  the tcpdump filter expression; empty means every packet. It is non-empty only when
+#       LINKLING_NO3P_CAPTURE_FILTER is set, and the check then never reports `pass`.
 set -eu
 mkdir -p /cap
 # -Z root: tcpdump would otherwise drop to its own user, which cannot write /cap.

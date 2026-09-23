@@ -10,7 +10,8 @@ every packet on `lo`, where both ends are the container itself.
 
 A sent packet is allowed only when it is one of:
 
-- TCP from the service port on a non-loopback interface: a reply to a client.
+- TCP from the service port on a non-loopback interface, other than a SYN without ACK: a reply
+  to a client. A SYN from that port would be the service opening a connection of its own.
 - TCP on `lo` with the service port at either end: the compose healthcheck, which runs inside
   the container and never leaves it.
 - ARP, or anything addressed to link-scope multicast (224.0.0.0/24, ff02::/16): interface
@@ -18,16 +19,18 @@ A sent packet is allowed only when it is one of:
 - One of this run's positive controls (below).
 
 Everything else is a violation. That includes every DNS query, because resolving a name is the
-first step of contacting it, and a query for an outside name is sent on off the machine.
+first step of contacting it, and Docker's resolver passes a query for an outside name on to
+the host's own resolvers (https://docs.docker.com/engine/network/:
+"embedded DNS server forwards external DNS lookups to the DNS servers configured on the host").
 
 The positive controls are planted by the check from inside the namespace, on every run: a TCP
 connection to `--control-addr` and a lookup of the random `--control-name`. Both must appear,
 and so must at least one reply from the service port, or the capture is not proven to be of
-this namespace doing this run's work. They are excused by exact match only: that address and
-port, or a DNS packet naming that label, plus any packet on `lo` to or from the source
-endpoint of such a query. Those are the same query and its replies: Docker's resolver rewrites
-the query's port 53 to one of its own (measured: `127.0.0.1.34118 > 127.0.0.11.57727: UDP`),
-and tcpdump prints no name for the rewritten copy or for a reply.
+this namespace doing this run's work. They are excused narrowly: a packet to that exact
+address and port; a packet whose bytes carry that random label; and a packet on `lo` to or
+from the source endpoint (never port 53) of a query carrying it. That last is the same query
+and its replies: Docker's resolver rewrites the query's port 53 to one of its own (measured:
+`127.0.0.1.34118 > 127.0.0.11.57727: UDP`), and tcpdump names no name in those headers.
 
 Prints one line per finding and ends with a summary line. Exit status: 0 clean, 1 at least one
 violation (a violation seen is an observation even if a control went missing), 2 blind: a
