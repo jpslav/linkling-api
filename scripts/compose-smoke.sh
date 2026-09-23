@@ -53,11 +53,12 @@ start() {
     if ! dc up -d --build --wait --wait-timeout 120 api >/dev/null 2>&1; then
         echo "--- last api log lines:" >&2
         dc logs --no-color --tail 20 api >&2 || true
-        # A service that started and then died was seen failing; anything else (a build
-        # that never finished, a container that never came up) is the check not seeing.
-        state="$(dc ps -a --format '{{.State}}' api 2>/dev/null || true)"
+        # A service that started and then died, or runs but fails its healthcheck, was seen
+        # failing. Anything else (a build that never finished, a container that never came
+        # up) is the check not seeing.
+        state="$(dc ps -a --format '{{.State}} {{.Health}}' api 2>/dev/null || true)"
         case "$state" in
-            exited|restarting|dead) fail "the api service is $state ($1)" ;;
+            exited*|restarting*|dead*|*unhealthy) fail "the api service is $state ($1)" ;;
         esac
         blind "the api service never became healthy ($1; state '${state:-none}')"
     fi
