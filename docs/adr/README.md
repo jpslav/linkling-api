@@ -13,4 +13,5 @@
 | [0010](0010-ci-first-test-and-package-skeleton.md) | The first CI test asserts environment truth, not application behavior | Accepted |
 | [0011](0011-links-api-surface.md) | The links API surface: routes, methods, status codes and JSON field names | Accepted |
 | [0012](0012-asgi-server-uvicorn.md) | uvicorn is the ASGI server, and the only new runtime dependency | Accepted |
+| [0013](0013-expiry-request-format.md) | The create request's expiry value is an absolute ISO-8601 UTC timestamp, not a relative duration | Proposed |
 <!-- adr-index:end -->
