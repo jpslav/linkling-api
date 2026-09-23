@@ -5,8 +5,10 @@ The Linkling service: the short-link API, redirects, click counts, the stats pag
 Part of **Linkling**, a small self-hosted link shortener built by the Tinyworks program.
 Every decision with reach is written down first, in `docs/adr/`, and the code is built to it.
 
-**Durability is the deployer's.** The link database is a single SQLite file at the path you
-give in `LINKLING_DB`, and nothing here backs it up for you — see `docs/adr/0007-compose-topology.md`.
+**Durability is the deployer's.** The link database is a single SQLite file, and nothing here
+backs it up for you. Backups are manual: somebody has to run the command in
+[Back it up](#back-it-up) and copy the file off the machine, and nothing reminds them or
+notices when they stop — see `docs/adr/0007-compose-topology.md`.
 
 ## What exists today
 
@@ -26,6 +28,86 @@ error handler is the one exception, and 500 is not a cacheable status. `expires`
 ISO-8601 UTC timestamp strictly in the future, shaped like `2026-01-01T00:00:00Z`
 (`docs/adr/0013`); omitted, a link never expires. The decisions are in `docs/adr/0001`,
 `0003`, `0005`, `0006` and `0013`.
+
+## Run it with Docker
+
+The whole stack is the service and the public site, from `docker compose up`
+(`docs/adr/0007-compose-topology.md`, `docs/adr/0015-compose-assembly.md`). The site is built
+from a checkout of `linkling-web` **beside** this one, so a clean checkout means two clones:
+
+```bash
+git clone git@github.com:jpslav/linkling-api.git
+git clone git@github.com:jpslav/linkling-web.git
+cd linkling-api
+echo 'LINKLING_API_KEY=a-long-random-team-key' > .env    # git-ignored; never commit it
+docker compose up -d
+```
+
+| Name | Default | |
+|---|---|---|
+| `LINKLING_API_KEY` | none: compose refuses to start and names it | the team key |
+| `LINKLING_DATA_DIR` | `./data` | where the database lives on the host |
+| `LINKLING_PORT` | `8000` | the service's host port: short links and the API |
+| `LINKLING_WEB_PORT` | `8080` | the public site's host port |
+| `LINKLING_WEB_DIR` | `../linkling-web` | the site's checkout |
+
+Each can go in the shell's environment or in `.env`. Inside the container the database is
+always `/data/linkling.db`. **`LINKLING_PUBLIC_URL`** is the host every short link is
+printed with (`https://<host>/<name>`). Each deployment sets its own, and the product names
+none. Nothing in the service reads it yet, so the compose file does not ask for it.
+
+**The service and the site are two origins.** Short links own the root of their host
+(`docs/adr/0001-short-url-shape.md`), so the site cannot share it: point one hostname at
+`LINKLING_PORT` and another at `LINKLING_WEB_PORT`.
+
+**Whatever you put in front of it must not log addresses either.** Neither container logs a
+visitor's address — the service runs with `--no-access-log` and the site with nginx's logging
+off (`deploy/nginx-privacy.conf`). A TLS proxy you add in front is outside the compose file,
+and most proxies log every client's address by default. Turn its access log off, or the
+privacy promise stops being true at your front door.
+
+`scripts/compose-smoke.sh` checks a stack started from nothing. It confirms that the service
+answers, that a link survives `docker compose down` and `up`, that the backup below is sound,
+and that the logs hold no client address. It uses its own project, port and data directory,
+so it does not touch a stack you already run. CI runs it on every pull request.
+
+### Where the database lives
+
+`./data/linkling.db` on the host (or under `LINKLING_DATA_DIR`), through a bind mount rather
+than a Docker volume. On Linux the directory ends up owned by uid 10001, the service's own
+user inside the container.
+
+- `docker compose down` and `docker compose down -v` both leave it alone. It is not a volume.
+- **`rm -rf data` or `git clean -fdx` deletes it.** `data/` is git-ignored, and `git clean -x`
+  removes ignored files too. For anything you care about, set `LINKLING_DATA_DIR` to a
+  directory outside the checkout.
+
+### Back it up
+
+With the stack running:
+
+```bash
+docker compose exec -u linkling api \
+  sqlite3 /data/linkling.db ".backup '/data/backup-$(date -u +%Y%m%dT%H%M%SZ).db'"
+```
+
+The backup lands next to the database, in `./data/`. **Then copy it off this machine**: a
+backup on the same disk goes wherever the disk goes. Run it before every upgrade, and as often
+as you can bear to lose the links made since the last one. The command runs inside the
+container because the service opens the database in WAL mode, and it is the command the
+CLI's `linkling backup` verb will wrap.
+
+### Restore
+
+On Linux, `data/` belongs to uid 10001, so the copy and the `rm` need `sudo`. The service
+takes ownership of the restored file when it starts.
+
+```bash
+docker compose down
+cp /path/to/backup-….db data/linkling.db
+rm -f data/linkling.db-wal data/linkling.db-shm
+docker compose up -d
+```
 
 ## Run it locally
 

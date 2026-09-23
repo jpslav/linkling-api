@@ -14,4 +14,5 @@
 | [0011](0011-links-api-surface.md) | The links API surface: routes, methods, status codes and JSON field names | Accepted |
 | [0012](0012-asgi-server-uvicorn.md) | uvicorn is the ASGI server, and the only new runtime dependency | Accepted |
 | [0013](0013-expiry-request-format.md) | The create request's expiry value is an absolute ISO-8601 UTC timestamp, not a relative duration | Proposed |
+| [0015](0015-compose-assembly.md) | How the compose file is assembled: the site's source, the service's user, logging, and origins | Proposed |
 <!-- adr-index:end -->
