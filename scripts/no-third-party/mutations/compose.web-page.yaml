@@ -1,0 +1,5 @@
+# --mutate web-page: the served home page loads a third-party font (index.html).
+services:
+  web:
+    volumes:
+      - ./scripts/no-third-party/mutations/index.html:/usr/share/nginx/html/index.html:ro
