@@ -1,5 +1,6 @@
 # The observer for scripts/no-third-party-check.sh: tcpdump, and the classifier that judges what
-# it captured, and refs.py, which lists what the site's pages pull in. The same base image the
+# it captured, refs.py, which lists what the site's pages pull in, and loads.py, which lists what
+# the service's own stats page would make a browser load. The same base image the
 # service already uses, so the check pulls no new image; tcpdump comes from Debian's archive
 # when this is built.
 # It is built and run only by the check; nothing in the shipped stack uses it.
@@ -9,5 +10,5 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends tcpdump \
     && rm -rf /var/lib/apt/lists/*
 
-COPY classify.py refs.py /usr/local/bin/
+COPY classify.py refs.py loads.py /usr/local/bin/
 COPY observe.sh /usr/local/bin/observe
