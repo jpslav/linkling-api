@@ -2,8 +2,9 @@
 # Brings up the compose stack and shows that it sends nothing to anyone but the client
 # (ADR-0009, LL-018). Every packet the `api` and `web` containers send is captured, from
 # before each one starts, while the check creates a link, follows it, follows a name that does
-# not exist, opens the stats page with and without the team key, deletes the link, follows it
-# again, and loads the public site. A sent packet that is not a reply to the check's own
+# not exist, opens the stats page with and without the team key, reads the link's counts with
+# and without it, deletes the link, follows it and reads its counts again, and loads the public
+# site. A sent packet that is not a reply to the check's own
 # requests fails the run, and so does any DNS query.
 #
 # A capture that sees nothing looks exactly like a clean one, so every run plants its own
@@ -193,9 +194,17 @@ expect "the stats page with the team key" 200 "$(curl -s -o "$work/stats.body" -
 grep -qF "$canary" "$work/stats.body" \
     || blind "the stats page answered 200 without the link the check made, so it was not exercised"
 expect "the stats page without a credential" 401 "$(curl -s -o /dev/null -w '%{http_code}' "$base/-/stats")"
+# The link's counts, while it still exists and has been followed exactly once above: an answer
+# that is 200 without that one follow in it is blind, not a pass. The date is matched as a
+# shape, not read off the clock, so a run that straddles midnight UTC cannot fail on it.
+expect "the link's counts with the team key" 200 "$(curl -s -o "$work/link-stats.body" -w '%{http_code}' "$base/-/api/links/$canary/stats" "${auth[@]}")"
+grep -qE '"days": *\{"[0-9]{4}-[0-9]{2}-[0-9]{2}": *1\}' "$work/link-stats.body" \
+    || blind "the link's counts answered 200 without the one follow the check made, so it was not exercised"
+expect "the link's counts without a credential" 401 "$(curl -s -o /dev/null -w '%{http_code}' "$base/-/api/links/$canary/stats")"
 expect "deleting the link" 204 "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$base/-/api/links/$canary" "${auth[@]}")"
 expect "following the deleted link" 410 "$(curl -s -o /dev/null -w '%{http_code}' "$base/$canary")"
-echo "api exercised: create, follow, follow of a missing name, /-/stats with and without the team key, delete, follow of the deleted link"
+expect "the deleted link's counts" 410 "$(curl -s -o /dev/null -w '%{http_code}' "$base/-/api/links/$canary/stats" "${auth[@]}")"
+echo "api exercised: create, follow, follow of a missing name, /-/stats with and without the team key, /-/api/links/<name>/stats with and without the team key, delete, follow of the deleted link, /-/api/links/<name>/stats of the deleted link"
 
 findings=()
 

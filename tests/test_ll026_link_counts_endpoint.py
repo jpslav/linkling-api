@@ -147,7 +147,10 @@ def test_the_answer_is_the_named_links_rows_and_no_other_links(
 def test_the_answer_is_never_cacheable(client, auth, make_link):
     make_link(name="q3-plan")
 
-    assert _stats(client, auth).headers["cache-control"] == "no-store"
+    response = _stats(client, auth)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_a_name_is_folded_as_a_follow_folds_it(client, auth, make_link, follow_on):
@@ -217,18 +220,27 @@ def test_the_key_is_checked_before_the_name_so_a_caller_without_it_learns_no_nam
 # --- unknown, deleted, expired ------------------------------------------------------------
 
 
+#: What the route says, as opposed to the router's own ``{"detail": "Not Found"}`` for a path
+#: nothing serves. Both are 404, so the status alone cannot tell a route that answered from
+#: a route that is missing.
+NO_SUCH_LINK = {"detail": "No such link."}
+
+
 def test_a_name_that_never_existed_is_404(client, auth):
     response = _stats(client, auth, "never-made")
 
     assert response.status_code == 404
-    assert "days" not in response.text
+    assert response.json() == NO_SUCH_LINK
 
 
 @pytest.mark.parametrize("name", ["-not-a-name", "under_score", "a" * 65])
 def test_a_name_that_cannot_be_a_link_is_404_like_a_name_that_never_existed(
     client, auth, name
 ):
-    assert _stats(client, auth, name).status_code == 404
+    response = _stats(client, auth, name)
+
+    assert response.status_code == 404
+    assert response.json() == NO_SUCH_LINK
 
 
 def test_a_deleted_name_is_410_not_an_empty_200(client, auth, make_link, follow_on):

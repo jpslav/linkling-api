@@ -23,6 +23,7 @@ link deletes its counts. The CLI is a separate piece of work and is not here yet
 | `POST /-/api/links` | `{"url": …, "name": …?, "created_by": …?, "expires": …?}` → `201 {"name", "url"}`. Needs the team key. |
 | `DELETE /-/api/links/<name>` | `204`. Needs the team key. A deleted name stays reserved forever. |
 | `GET\|HEAD /<name>` | `302` to the long URL with `Cache-Control: no-store`. No credential, no cookie. |
+| `GET /-/api/links/<name>/stats` | `200 {"days": {"YYYY-MM-DD": count}}`: that link's count for each UTC day it was followed, and no row for a day nobody followed it. Needs the team key. `404` never existed, `410` deleted; an expired link answers `200` with the counts it kept. Reading it does not count as a follow. |
 | `GET /-/stats` | A plain HTML page: every link that has not been deleted, and its count for each UTC day. Needs the team key over HTTP Basic. |
 
 `/-/stats` is opened in a browser, so it takes HTTP Basic rather than the Bearer header the
@@ -93,7 +94,8 @@ so it does not touch a stack you already run. CI runs it on every pull request.
 `scripts/no-third-party-check.sh` shows that the stack sends nothing to anyone but the client
 (`docs/adr/0009-third-party-services.md`). It captures every packet the service and the site
 send, from before either one starts, while it creates a link, follows it, opens the stats page
-with and without the team key, deletes the link, and loads the site. Anything but a reply to
+and reads the link's counts, each with and without the team key, deletes the link, reads its
+counts again, and loads the site. Anything but a reply to
 its own requests fails the run, and so does any DNS lookup. Each run also plants a connection
 and a lookup of its own, and a capture that misses them is reported blind rather than clean.
 It also fetches the site's pages and every stylesheet they pull in, and fails on any
