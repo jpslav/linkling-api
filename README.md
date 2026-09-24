@@ -33,7 +33,7 @@ day first. A link that has expired is listed and marked, and keeps its counts; a
 link is not listed, because its target and its counts went when it was deleted. Opening
 the page does not count as a follow.
 
-Unknown names answer `404`; deleted or expired ones, `410`; and every response the
+Following an unknown name answers `404`, and a deleted or expired one `410`; and every response the
 application produces carries `Cache-Control: no-store` — a 500 from the framework's own
 error handler is the one exception, and 500 is not a cacheable status. `expires` is an
 ISO-8601 UTC timestamp strictly in the future, shaped like `2026-01-01T00:00:00Z`

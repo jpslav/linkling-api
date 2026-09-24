@@ -471,8 +471,9 @@ def create_app(config: Config | None = None) -> FastAPI:
         The key is checked before the name is looked up, so a caller without it learns
         nothing about which names exist. Answers as the follow route does for a name that
         never existed (404) or was deleted (410), but not for an expired link: it answers
-        200 with the counts ADR-0014 keeps, because the data is still there and the stats
-        page shows it. Calls only ``counts.days_for``, never ``counts.record_follow``:
+        200 with the counts ADR-0014 keeps (``docs/adr/0014-daily-counts-table-shape.md:42-46``),
+        because the data is still there and the stats page shows it (``stats.py``, module
+        docstring). Calls only ``counts.days_for``, never ``counts.record_follow``:
         reading a count must not add to it.
         """
         folded = names.normalise(name)

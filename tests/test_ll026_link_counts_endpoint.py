@@ -63,7 +63,8 @@ def _stats(client, auth, name: str = "q3-plan"):
 
 
 def test_the_test_days_are_the_dates_these_tests_name():
-    """The tests below read their keys off ``counts.utc_day``; this pins that to real dates."""
+    """The tests below name their days as literal dates; this ties ``DAY_ONE`` to
+    ``DAY_THREE`` to those dates, through the same ``counts.utc_day`` the service uses."""
     assert [counts.utc_day(d) for d in (DAY_ONE, DAY_TWO, DAY_THREE)] == [
         "2026-09-23",
         "2026-09-24",
@@ -86,6 +87,8 @@ def test_the_answer_is_a_days_object_keyed_by_utc_date_and_nothing_else(
     assert response.status_code == 200, response.text
     assert response.headers["content-type"] == "application/json"
     assert response.json() == {"days": {"2026-09-24": 1, "2026-09-23": 2}}
+    # Newest day first, as the stats page lists them: JSON keeps the order the service wrote.
+    assert list(response.json()["days"]) == ["2026-09-24", "2026-09-23"]
 
 
 def test_a_day_nobody_followed_the_link_has_no_key(client, auth, make_link, follow_on):
@@ -284,8 +287,8 @@ def test_reading_stats_never_counts_as_a_follow(
     """Every way of asking -- live, never followed, unknown, deleted, expired, refused --
     leaves ``daily_counts`` exactly as the follows left it.
 
-    A live link nobody has followed is the case that catches a route which counts on read:
-    it would write a row where there was none, and answer with today's count at 1.
+    A live link nobody has followed is in the list because a route that counted on read
+    would write a row there, where the follows left none.
     """
     monkeypatch.setattr(links_module, "_now", lambda: "2026-09-23T11:00:00Z")
     make_link(name="q3-plan")
