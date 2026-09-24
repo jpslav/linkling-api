@@ -16,9 +16,10 @@ would fetch, or run:
     `javascript:` URL in a src, href, action or the like;
   * an absolute or protocol-relative URL in an attribute that fetches (src, srcset, href, data,
     poster, ...) of any tag except <a>, <area> and <form>, whose URLs a reader has to follow
-    before anything is fetched. It is read as a URL parser reads it: `https:/host` and `\\\\host`
-    count, a tab or newline inside it is dropped, and a host may start with any character
-    (`[` of an IPv6 literal, `@`, a percent escape);
+    before anything is fetched. It is read as a URL parser reads it: `\\\\host` and `///host` count,
+    a tab or newline inside it is dropped, and a host may start with any character (`[` of an
+    IPv6 literal, `@`, a percent escape). `https:/host` counts too, though it leaves the origin
+    only from a page served over http (from an https page it is a relative path);
   * `<meta http-equiv=refresh>` naming such a URL, which fires by itself;
   * a `data:` URL that is a document, a stylesheet or a script (not an image, not `text/plain`,
     and not `data:,`) in an <iframe>, <frame>, <object>, <embed> or <link>;
@@ -54,12 +55,13 @@ from html.parser import HTMLParser
 # The start of an absolute or protocol-relative URL inside a longer value: at its start or after
 # something that separates one URL from the next (a control character or space, a comma in a
 # srcset, `=` in a refresh's `url=`, a quote, a parenthesis or `<` around it). A scheme takes any
-# run of slashes and backslashes after it, and two on their own are protocol-relative. What
-# follows may be anything a host or its user info can start with (`[` of an IPv6 literal, `@`, a
-# percent escape, a non-ASCII letter). Only a control character, a space, a slash, a backslash, a
-# quote, a parenthesis or an angle bracket there does not count, which keeps `https:` alone, and
-# `a//b` in the middle of a word, out.
-_URL_START = r"""(?:https?:[/\\]*|[/\\]{2})[^\x00-\x20/\\'")<>]"""
+# run of slashes and backslashes after it, and two or more on their own are protocol-relative (a
+# browser ignores the extra ones: `///host` is `//host`). What follows the run may be anything a
+# host or its user info can start with (`[` of an IPv6 literal, `@`, a percent escape, a
+# non-ASCII letter). Only a control character, a space, a quote, a closing parenthesis or an
+# angle bracket there does not count, which keeps `https:` alone, and `a//b` in the middle of a
+# word, out.
+_URL_START = r"""(?:https?:[/\\]*|[/\\]{2}[/\\]*)[^\x00-\x20/\\'")<>]"""
 _EXTERNAL = re.compile(r"""(?:^|[\x00-\x20,;=('"<])""" + _URL_START, re.IGNORECASE)
 
 # What a URL parser drops from anywhere in its input, before it looks at the scheme.
