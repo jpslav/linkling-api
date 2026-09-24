@@ -55,11 +55,10 @@ check=scripts/no-third-party-check.sh
     || blind "no stand-in site at $standin, so there is nothing to mutate"
 [ -f "$check" ] || blind "no check at $check, so there is nothing to run"
 
-work="$(mktemp -d)"
+work="$(mktemp -d)" || blind "could not make a temporary directory, so there is no mutated stand-in to build"
 trap 'rm -rf "$work"' EXIT
-mkdir "$work/site"
-cp -R "$standin/." "$work/site/"
-printf '%s\n' "$fixture" >"$work/site/mode"
+{ mkdir "$work/site" && cp -R "$standin/." "$work/site/" && printf '%s\n' "$fixture" >"$work/site/mode"; } \
+    || blind "could not make the mutated copy of the stand-in in $work, so there is nothing to check"
 
 echo "running $check in full against the stand-in with the '$fixture' defect: it must end $want_status ('${want_text%%:*}')"
 # Its output is shown as it comes and kept, so that the last line can be read. The status is the

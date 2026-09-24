@@ -132,8 +132,11 @@ def test_the_cut_short_reply_promises_more_than_it_sends_and_closes():
 
 def test_the_stalled_reply_sends_its_headers_and_then_holds_the_connection_open():
     with serving("stalled-reply") as port:
-        conn, resp = _get(port, "/second.css", timeout=1)
+        # The headers get the generous default, so a slow runner cannot end this before it starts;
+        # only the read of the body that never comes is bounded tightly.
+        conn, resp = _get(port, "/second.css")
         assert resp.status == 200
+        conn.sock.settimeout(1)
         with pytest.raises(TimeoutError):
             resp.read()
         conn.close()
@@ -311,6 +314,29 @@ def test_the_script_refuses_anything_but_one_fixture_name(tree, argv):
     )
     assert done.returncode == 64, done.stdout + done.stderr
     assert not record.exists(), "the check ran on a usage error"
+
+
+def test_the_script_is_blind_when_it_cannot_make_its_temporary_copy(tree, tmp_path):
+    # A `mktemp` that fails: an unusable TMPDIR is not portable for this, since macOS's falls back.
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    (shim / "mktemp").write_text("#!/bin/sh\nexit 1\n")
+    (shim / "mktemp").chmod(0o755)
+    record = tree / "record.txt"
+    env = {
+        **os.environ,
+        "FAKE_OUTPUT": "",
+        "FAKE_STATUS": "0",
+        "FAKE_RECORD": str(record),
+        "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+    }
+    done = subprocess.run(
+        ["bash", str(tree / "scripts" / SCRIPT.name), "cut-short-reply"],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "blind: could not make a temporary directory" in done.stderr
+    assert not record.exists(), "the check ran with no mutated stand-in"
 
 
 def test_the_script_is_blind_when_there_is_no_stand_in_to_mutate(tree):
