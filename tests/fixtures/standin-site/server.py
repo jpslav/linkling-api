@@ -88,7 +88,7 @@ def handler_for(mode: str):
             if b"{external}" in body:
                 link = f'<link rel="stylesheet" href="{EXTERNAL_STYLESHEET}">' if mode == "external-stylesheet" else ""
                 body = body.replace(b"{external}", link.encode())
-            short = mode in ("cut-short-reply", "stalled-reply") and self.path == "/second.css"
+            short = mode in ("stalled-reply",) and self.path == "/second.css"
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body) + (SHORT_BY if short else 0)))
