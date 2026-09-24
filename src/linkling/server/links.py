@@ -138,8 +138,9 @@ def create_generated(
 def is_expired(expires_at: str | None) -> bool:
     """Whether a link with this ``expires_at`` is expired right now.
 
-    One definition, used by ``lookup`` and by the stats page, so that a link the page marks
-    expired is exactly a link a follow answers 410 for.
+    One definition, used by ``lookup`` and by the stats page, so the page marks a link
+    expired by the same rule a follow uses to answer it 410. Each call reads the clock
+    afresh, so a link can turn expired between one call and the next.
 
     A link expiring at exactly ``_now()`` is expired: ``expires_at`` is compared with
     ``<=``, not ``<``, matching RFC 7519 SS4.1.4's own

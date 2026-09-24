@@ -23,14 +23,14 @@ link deletes its counts. The CLI is a separate piece of work and is not here yet
 | `POST /-/api/links` | `{"url": …, "name": …?, "created_by": …?, "expires": …?}` → `201 {"name", "url"}`. Needs the team key. |
 | `DELETE /-/api/links/<name>` | `204`. Needs the team key. A deleted name stays reserved forever. |
 | `GET\|HEAD /<name>` | `302` to the long URL with `Cache-Control: no-store`. No credential, no cookie. |
-| `GET /-/stats` | A plain HTML page: every link and its count for each UTC day. Needs the team key over HTTP Basic. |
+| `GET /-/stats` | A plain HTML page: every link that has not been deleted, and its count for each UTC day. Needs the team key over HTTP Basic. |
 
 `/-/stats` is opened in a browser, so it takes HTTP Basic rather than the Bearer header the
 API uses (`docs/adr/0006`): any user name, and the team key as the password. It lists every
 link that has not been deleted, by name, with its target and its day-by-day counts, newest
 day first. A link that has expired is listed and marked, and keeps its counts; a deleted
-link is not listed, because its counts went with it. Opening the page does not count as a
-follow.
+link is not listed, because its target and its counts went when it was deleted. Opening
+the page does not count as a follow.
 
 Unknown names answer `404`; deleted or expired ones, `410`; and every response the
 application produces carries `Cache-Control: no-store` — a 500 from the framework's own
@@ -93,10 +93,11 @@ so it does not touch a stack you already run. CI runs it on every pull request.
 `scripts/no-third-party-check.sh` shows that the stack sends nothing to anyone but the client
 (`docs/adr/0009-third-party-services.md`). It captures every packet the service and the site
 send, from before either one starts, while it creates a link, follows it, opens the stats page
-with and without the team key, deletes the link, and loads the site. Anything but a reply to its own requests fails the run, and so does any DNS lookup. Each
-run also plants a connection and a lookup of its own, and a capture that misses them is
-reported blind rather than clean. It also fetches the site's pages and every stylesheet they
-pull in, and fails on any absolute URL, `<script>` or inline event handler in what they serve.
+with and without the team key, deletes the link, and loads the site. Anything but a reply to
+its own requests fails the run, and so does any DNS lookup. Each run also plants a connection
+and a lookup of its own, and a capture that misses them is reported blind rather than clean.
+It also fetches the site's pages and every stylesheet they pull in, and fails on any
+absolute URL, `<script>` or inline event handler in what they serve.
 It cannot see routes it does not exercise, anything after the run ends, what a browser does
 with the pages, what the host does outside the containers, or a proxy you put in front. CI
 runs it with `--api-only`, because CI cannot fetch `linkling-web`, and runs it again with a

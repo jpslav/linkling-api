@@ -5,8 +5,8 @@ password (ADR-0006b), not by the Bearer header the API uses. As in LL-017, the g
 meaningful as a pair: a page that refused everybody would pass the "401 without a key"
 half, and a page that refused nobody would pass the "200 with one" half.
 
-Counts are read straight from the database file with ``sqlite3``, never through the
-application, for the reason ``test_ll006_daily_counts`` gives.
+Where a test needs to know what ``daily_counts`` holds, it reads the database file with
+``sqlite3``, never through the application, for the reason ``test_ll006_daily_counts`` gives.
 """
 
 from __future__ import annotations
@@ -45,7 +45,11 @@ def stats_auth(config) -> dict[str, str]:
 
 @pytest.fixture
 def follow_on(client, monkeypatch):
-    """Follow a link ``times`` times at a chosen instant, and say it counted."""
+    """Follow a link ``times`` times at a chosen instant, requiring each follow to redirect.
+
+    A redirect is a counted follow (ADR-0004), so this is how a test puts rows in
+    ``daily_counts`` for the page to list.
+    """
 
     def _follow(name: str, instant: float, times: int = 1) -> None:
         monkeypatch.setattr(counts, "_epoch_seconds", lambda: instant)
@@ -276,7 +280,7 @@ def test_viewing_the_page_leaves_every_daily_count_row_unchanged(
     assert [(day, n) for _, day, n in before] == [("2026-09-23", 2), ("2026-09-24", 1)]
 
     # Move the clock to a day nobody has followed on, so a page that counted anything
-    # would either add a row or raise one.
+    # would either add a row or raise a count.
     monkeypatch.setattr(counts, "_epoch_seconds", lambda: DAY_THREE)
     for headers, expected in (
         (stats_auth, 200),

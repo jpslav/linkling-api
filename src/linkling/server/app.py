@@ -362,11 +362,12 @@ def create_app(config: Config | None = None) -> FastAPI:
     ) -> None:
         """ADR-0006b: the stats page's gate. HTTP Basic, the team key as the *password*.
 
-        Basic rather than Bearer because a browser opens this page and can only prompt for
-        Basic; ``curl -u ":$KEY"`` sends the same thing. The user name is ignored, since
-        there is one key and no accounts, and the password is everything after the first
-        colon (RFC 7617: only the user-id is barred from containing one), so a key with a
-        colon in it still works. Compared by the same ``_is_team_key`` as Bearer.
+        Basic rather than Bearer because a person opens this page in a browser, and Basic
+        is browser-native, needs no session code and works with ``curl -u ":$KEY"``
+        (ADR-0006b). The user name is ignored, since there is one key and no accounts, and
+        the password is everything after the first colon (RFC 7617 section 2: only the
+        user-id is barred from containing one), so a key with a colon in it still works.
+        Compared by the same ``_is_team_key`` as Bearer.
         """
         unauthorised = HTTPException(
             401,

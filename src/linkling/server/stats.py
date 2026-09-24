@@ -1,17 +1,19 @@
 """The stats page (R-010): every link, and its count for each UTC day, as plain HTML.
 
-Read-only, and it stays that way by not importing ``counts``: viewing this page is not
-following a link, and ADR-0004 counts requests that follow one.
+Read-only: ``collect`` runs one SELECT, and nothing here imports ``counts``, so viewing
+this page cannot count as a follow (ADR-0004 counts requests that follow a link).
 
-Which links are listed follows from what the tables keep. A deleted link is not listed: its
-counts went with it (ADR-0014) and its tombstone holds only a name and a date. An expired
-link is listed, marked, with its counts, because expiry is not deletion and ADR-0014 keeps
-an expired link's counts. A live link nobody has followed is listed too, with no invented
-zero row.
+Which links are listed follows from what the tables keep. A deleted link is not listed:
+``links.delete`` dropped its target and maker, and its counts went with it by trigger
+(ADR-0014). An expired link is listed, marked, with its counts: expiry is not deletion,
+and ADR-0014 keeps an expired link's counts. No ADR says whether this page shows an
+expired link, so showing it is this module's choice. A live link nobody has followed is
+listed too, with no invented zero row.
 
 The page references nothing -- no script, stylesheet, image or link -- so there is nothing
-for it to load from anyone (ADR-0009). Every value is escaped: a target is caller-supplied
-text, and ``created_by`` is a free-text label.
+for it to load from anyone. ADR-0009 rules out third parties in the click path and on the
+public site and does not name this page; the page follows the same rule. Every value is
+escaped: a target is caller-supplied text, and ``created_by`` is a free-text label.
 """
 
 from __future__ import annotations
@@ -22,8 +24,8 @@ from html import escape
 
 from . import links
 
-#: One statement, so the page is one consistent snapshot rather than a link list read at
-#: one moment and its counts at another. Days run newest first.
+#: One statement, so the links and their counts come from one read snapshot rather than a
+#: link list read at one moment and its counts at another. Days run newest first.
 _QUERY = (
     "SELECT links.name, links.target, links.created_by, links.expires_at, "
     "daily_counts.day, daily_counts.count "
@@ -85,7 +87,7 @@ def _section(link: LinkStats) -> list[str]:
 
 
 def render(stats: list[LinkStats]) -> str:
-    """The whole page. Plain HTML, unstyled: the brief says it need not be pretty."""
+    """The whole page. Plain HTML, unstyled."""
     lines = [
         "<!doctype html>",
         '<html lang="en">',
