@@ -1,4 +1,4 @@
-"""The FastAPI application: create, follow, delete and the stats page.
+"""The FastAPI application: create, follow, delete, one link's counts and the stats page.
 
 The route space is ADR-0001's: link names live at the root, everything the service serves
 itself lives under ``/-/``, and a custom name may not begin with ``-`` -- which is what
@@ -461,6 +461,32 @@ def create_app(config: Config | None = None) -> FastAPI:
                 GONE_STATUS, "That link was already deleted. Its name stays reserved."
             ) from exc
         return Response(status_code=204)
+
+    @app.get("/-/api/links/{name}/stats", dependencies=[Depends(require_key)])
+    def link_stats(
+        name: str, conn: sqlite3.Connection = Depends(get_conn)
+    ) -> dict[str, dict[str, int]]:
+        """R-008: one link's count for each UTC day, as ``{"days": {"YYYY-MM-DD": count}}``.
+
+        The key is checked before the name is looked up, so a caller without it learns
+        nothing about which names exist. Answers as the follow route does for a name that
+        never existed (404) or was deleted (410), but not for an expired link: it answers
+        200 with the counts ADR-0014 keeps, because the data is still there and the stats
+        page shows it. Calls only ``counts.days_for``, never ``counts.record_follow``:
+        reading a count must not add to it.
+        """
+        folded = names.normalise(name)
+        if folded is None:
+            raise HTTPException(UNKNOWN_STATUS, "No such link.")
+        try:
+            days = counts.days_for(conn, folded)
+        except links.NameUnknown as exc:
+            raise HTTPException(UNKNOWN_STATUS, "No such link.") from exc
+        except links.NameDeleted as exc:
+            raise HTTPException(
+                GONE_STATUS, "That link was deleted. Its name stays reserved."
+            ) from exc
+        return {"days": days}
 
     @app.get("/-/stats", dependencies=[Depends(require_basic_key)])
     def stats_page(conn: sqlite3.Connection = Depends(get_conn)) -> HTMLResponse:
