@@ -97,7 +97,11 @@ which is a one-line compose change and does not reopen this record.
 ## Consequences
 
 - A clean checkout of `linkling-api` means two clones side by side. CI can build only the
-  service, because a workflow's token reaches only its own repository (ADR-0008).
+  service, because a workflow's token reaches only its own repository (ADR-0008). *(Added
+  2026-09-24, LL-028: CI also builds a stand-in for the site, `tests/fixtures/standin-site`, to
+  run the site half of the no-third-party check. It is not `linkling-web`, so the real site
+  is still never built in CI, and nginx and `deploy/nginx-privacy.conf` are not exercised
+  there.)*
 - The database is `./data/linkling.db` on the host, owned on Linux by uid 10001. `docker compose down -v`
   does not touch it, because it is not a volume. `rm -rf data` or `git clean -fdx` does delete
   it.
