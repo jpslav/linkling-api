@@ -1,5 +1,5 @@
-"""Lists what a page the service serves would make a browser load, for no-third-party-check.sh's
-scan of the service's own /-/stats page (LL-025).
+"""Lists the ways a page the service serves names another origin or runs script, for
+no-third-party-check.sh's scan of the service's own /-/stats page (LL-025).
 
 Usage: loads.py html|headers  < what was served
 
@@ -9,24 +9,39 @@ this script failing to run, which the check calls blind. Exits 64 for a mode it 
 The site's pages get a stricter scan, in the check itself: any absolute URL, anywhere, fails
 (that is deliberate there, "until someone adds a reviewed exception"). The stats page cannot
 take that scan, because it prints every link's target as text and a target is a URL. So this
-reads the page as HTML and flags what a browser would go and fetch, or run:
+reads the page as HTML and flags what a developer could plausibly write into it that a browser
+would fetch, or run:
 
-  * any <script>, and any inline event handler on any tag (which can fetch() with no <script>);
-  * an absolute or protocol-relative URL in a URL-bearing attribute (src, srcset, href, data,
-    poster, ...) of any tag except <a>, <area> and <form>, which a reader has to act on before
-    anything is fetched. `https:/host` and `\\\\host` count: a browser reads them as another
-    origin (the WHATWG URL standard treats \\ as / in http(s) URLs);
+  * any <script>; any inline event handler on any tag (which can fetch() with no <script>); a
+    `javascript:` URL in a src, href, action or the like;
+  * an absolute or protocol-relative URL in an attribute that fetches (src, srcset, href, data,
+    poster, ...) of any tag except <a>, <area> and <form>, whose URLs a reader has to follow
+    before anything is fetched. It is read as a URL parser reads it: `https:/host` and `\\\\host`
+    count, a tab or newline inside it is dropped, and a host may start with any character
+    (`[` of an IPv6 literal, `@`, a percent escape);
   * `<meta http-equiv=refresh>` naming such a URL, which fires by itself;
-  * a url() or @import to another origin in a <style> or a style="" attribute.
+  * a `data:` URL that is a document, a stylesheet or a script (not an image, not `text/plain`,
+    and not `data:,`) in an <iframe>, <frame>, <object>, <embed> or <link>;
+  * CSS, in a <style> or a style="": a url() to another origin, a quoted string that starts with
+    one (`@import "..."`, a string candidate of `image-set()`), or an @import of a `data:` URL;
+    and a url() to another origin in an SVG presentation attribute (fill, stroke, filter, ...);
+  * a `srcdoc`, which is judged as a page of its own.
 
-Text is never flagged, in an element or an attribute that fetches nothing (alt, title). An
-<a href> to another origin is not flagged either: nothing is fetched until someone follows it.
-That is looser than the site's scan on purpose, and it is the whole of what this one lets
-through.
+Text is never flagged, in an element or in an attribute that fetches nothing (alt, title,
+aria-label, data-*). An <a href> to another origin is not flagged either, since nothing is
+fetched until someone follows it; a `javascript:` one is, since that is script.
 
-For `headers`, the raw response headers as curl's -D wrote them: any absolute URL fails, as it
-does for the site (a `Link: <https://...>; rel=preload` header is a load, and `Location:` is
-another origin's URL in a response nobody asked to be sent away).
+What it does not model, and does not claim to. It is a guard against a developer adding a web
+font, an image or a script to the stats page, not a defence against a page written to get past
+it. python's html.parser has no foreign content, so markup inside an <svg><title> or an
+<svg><textarea> is read as text where a browser makes elements of it. It does not look inside a
+`data:` document. A `data:image/svg+xml` URL is not flagged even in an <iframe> or an <object>,
+where the SVG is a document that can load what it likes (as an <img> or an icon it cannot). And
+a quoted string in CSS that starts with a URL is flagged even where it is only `content:` text.
+
+For `headers`, the raw response headers as curl's -D wrote them: any absolute or
+protocol-relative URL fails, as it does for the site (a `Link: <https://...>; rel=preload`
+header loads).
 """
 
 from __future__ import annotations
@@ -38,11 +53,12 @@ from html.parser import HTMLParser
 
 # The start of an absolute or protocol-relative URL inside a longer value: at its start or after
 # something that separates one URL from the next (a control character or space, a comma in a
-# srcset, `=` in a refresh's `url=`, a quote or bracket around it). A scheme takes any run of
-# slashes and backslashes after it, and two on their own are protocol-relative. What follows may
-# be anything a host or its user info can start with (`[` of an IPv6 literal, `@`, a percent
-# escape, a non-ASCII letter): only a control character, a space, a slash, a quote or a bracket
-# does not count, which keeps `https:` alone, and `a//b` in the middle of a word, out.
+# srcset, `=` in a refresh's `url=`, a quote, a parenthesis or `<` around it). A scheme takes any
+# run of slashes and backslashes after it, and two on their own are protocol-relative. What
+# follows may be anything a host or its user info can start with (`[` of an IPv6 literal, `@`, a
+# percent escape, a non-ASCII letter). Only a control character, a space, a slash, a backslash, a
+# quote, a parenthesis or an angle bracket there does not count, which keeps `https:` alone, and
+# `a//b` in the middle of a word, out.
 _URL_START = r"""(?:https?:[/\\]*|[/\\]{2})[^\x00-\x20/\\'")<>]"""
 _EXTERNAL = re.compile(r"""(?:^|[\x00-\x20,;=('"<])""" + _URL_START, re.IGNORECASE)
 
@@ -53,14 +69,16 @@ _DROPPED = re.compile(r"[\t\n\r]")
 # something given by value that can hold anything, so nothing about the origin of what it loads
 # can be read off the markup. Not one with no media type (`data:,` and `data:;base64,...` are
 # `text/plain`, which is what an icon written to stop a favicon request looks like), nor `text/plain`
-# itself, nor an image, which cannot load anything.
+# itself, nor an image: as an <img> or an icon it cannot load anything. (A `data:image/svg+xml`
+# URL in an <iframe> or an <object> is a document that can, and is not flagged: see the module
+# docstring.)
 _JAVASCRIPT_URL = re.compile(r"^[\x00-\x20]*javascript:", re.IGNORECASE)
 _DATA_DOCUMENT = re.compile(r"^[\x00-\x20]*data:(?![,;]|\s*image/|\s*text/plain)", re.IGNORECASE)
 
 # CSS naming an image or stylesheet from another origin: `url(` followed by one, and a quoted
-# string that starts with one (`@import "..."`, and every candidate of `image-set()` after the
-# first, which are strings and not `url()`). `_CSS_URL_FN` is the first alone, for the many
-# attributes (`fill`, `filter`, `mask`, ...) that take a `url()` and nothing else.
+# string that starts with one (`@import "..."`, and a candidate of `image-set()` written as a
+# string instead of a `url()`). `_CSS_URL_FN` is the first alone, for the attributes (`fill`,
+# `filter`, `mask`, ...) that take a `url()` and nothing else.
 _CSS_URL_FN = re.compile(r"""url\(\s*["']?\s*""" + _URL_START, re.IGNORECASE)
 _CSS_LOAD = re.compile(r"""(?:url\(\s*["']?|["']|@import)\s*""" + _URL_START, re.IGNORECASE)
 _CSS_IMPORT_DATA = re.compile(r"""@import\s*(?:url\(\s*)?["']?\s*data:""", re.IGNORECASE)
@@ -111,7 +129,7 @@ def _css_escape(match: re.Match) -> str:
     if match.group(1) is None:
         return "" if match.group(2) == "\n" else match.group(2)
     code = int(match.group(1), 16)
-    return chr(code) if 0 < code <= 0x10FFFF and not 0xD800 <= code <= 0xDFFF else "�"
+    return chr(code) if 0 < code <= 0x10FFFF and not 0xD800 <= code <= 0xDFFF else "\ufffd"
 
 
 def _css_text(text: str) -> str:
@@ -168,7 +186,8 @@ class _Loads(HTMLParser):
     def handle_startendtag(self, tag, attrs):
         # html.parser reads `<style/>` as an element that is over at once, so the CSS after it
         # would be judged as text. A browser ignores the slash on `style` and reads raw text up to
-        # `</style>`, so this is a start tag, as it is there.
+        # `</style>` (checked with html5lib, which follows the HTML Standard's tree builder: it
+        # puts `@import url(...)` in the `<style/>`'s text), so this is a start tag, as it is there.
         self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag):
@@ -179,8 +198,9 @@ class _Loads(HTMLParser):
         if not self._style_open:
             return
         # html.parser hands a <style>'s text over raw. A browser decodes character references in
-        # it when the <style> is inside <svg> or <math>, so this reads both ways: more matches,
-        # never fewer.
+        # it when the <style> is inside <svg> (checked with html5lib: `&#x2f;` there is `/`, and
+        # stays `&#x2f;` in an HTML <style>), so it is decoded here for both, which can flag text
+        # a browser would not decode, the safe direction.
         css = _css_text(html.unescape(data))
         if _CSS_LOAD.search(css) or _CSS_IMPORT_DATA.search(css):
             self.found.append(f"<style> loads from another origin: {_shown(data)}")

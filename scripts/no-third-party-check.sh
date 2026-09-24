@@ -22,11 +22,13 @@
 #
 # The service's own `/-/stats` page is judged by what it serves too, but not by that scan: it
 # prints every link's target as text, and a target is a URL. It is read as HTML instead
-# (scripts/no-third-party/loads.py), and fails on what a browser would load or run from it: a
-# <script>, an inline event handler, or another origin's URL in a src, srcset, href (except an
-# <a>'s) and the like. A target shown as text, and a link a reader has to follow, pass. Its
-# response headers get the site's rule. The scan is proved before it is trusted: it must flag a
-# load the check plants in a page of its own, or the run is blind.
+# (scripts/no-third-party/loads.py, whose docstring says what it flags and what it does not
+# model), and fails on markup that names another origin or runs script: a <script>, an inline
+# event handler, another origin's URL in an attribute that fetches (a src, a srcset, an href
+# other than an <a>'s) or in CSS. A target shown as text, and a link a reader has to follow, pass.
+# Its response headers fail on any absolute or protocol-relative URL, as the site's do. The scan
+# is proved before it is trusted: it must flag a load the check plants in a page of its own, or
+# the run is blind.
 #
 # What this cannot see, so that nobody reads more into a pass than it holds: routes and paths
 # it does not exercise; anything the services would do after the run's window (on a timer, say);
@@ -45,9 +47,9 @@
 #   LINKLING_NO3P_PROJECT   compose project name   (default linkling-no3p)
 #   LINKLING_NO3P_PORT      host port for the api  (default 18100)
 #   LINKLING_NO3P_WEB_PORT  host port for the site (default 18180)
-#   LINKLING_NO3P_MAX_TIME  seconds one request may take, connecting and reading the reply both
-#                           counted (default 10): a service or site that accepts a connection
-#                           and never answers is `blind` after this long, not a hang
+#   LINKLING_NO3P_MAX_TIME  seconds one whole request may take, curl's --max-time (default 10):
+#                           a service or site that accepts a connection and never answers is
+#                           `blind` after this long, not a hang
 #   LINKLING_WEB_DIR        the linkling-web checkout (default ../linkling-web, as compose.yaml)
 # Each run gets a fresh .smoke-data/no3p-run-<random>/, holding the service's database and the
 # captures as tcpdump prints them. It is left behind, as compose-smoke.sh leaves its own: on
@@ -87,11 +89,12 @@ case "$mutate" in
     *) usage ;;
 esac
 
-# curl's --max-time for every request the check makes. Answers on loopback took 4 ms on average
-# and 18 ms at the slowest in 60 requests on Docker Desktop (LL-025), so 10 s is hundreds of
-# times what a healthy one needs, room for a loaded CI runner, and still a small fraction of the
-# CI job's own timeout, which is what a silent service used to cost. `--max-time 0` means no limit
-# at all, so a limit that is not a whole number above 0 is a usage error, not passed on.
+# curl's --max-time for every request the check makes. In one measurement (30 creates and 30
+# follows against the api container on Docker Desktop, over loopback) a request took 4 ms on
+# average and 18.5 ms at the slowest, so 10 s is over five hundred times what a healthy one
+# needed, room for a loaded CI runner, and still far below a CI job's own timeout, which is what
+# a silent service used to run into. `--max-time 0` means no limit at all, so a limit that is
+# not a whole number above 0 is a usage error, not passed on.
 max_time="${LINKLING_NO3P_MAX_TIME:-10}"
 case "$max_time" in
     ""|*[!0-9]*) echo "LINKLING_NO3P_MAX_TIME must be a whole number of seconds above 0, not '$max_time'" >&2; exit 64 ;;
@@ -193,12 +196,12 @@ fi
 
 # --- exercise -------------------------------------------------------------------------------
 
-# Why curl gave up, by its exit status. compose-smoke.sh's ask() keeps its own copy of this
-# table: the two scripts are kept apart on purpose (LL-021).
+# Why curl gave up, by its exit status. compose-smoke.sh's ask() has its own, shorter table of
+# these; the only thing the two scripts share is scripts/lib/port-check.sh.
 why_curl() {
     case "$1" in
         7) echo "curl could not connect" ;;
-        18) echo "the reply ended before its Content-Length" ;;
+        18) echo "the reply stopped before its end" ;;
         28) echo "curl timed out after ${max_time}s" ;;
         52) echo "the connection closed with no reply" ;;
         56) echo "receiving the reply failed" ;;
@@ -304,8 +307,9 @@ if [ "$api_only" = 0 ]; then
         # -g: a path is a path, not one of curl's globs. A fetch that did not finish is `blind`
         # here, never skipped (LL-025): 000 is no status at all, and a status with a non-zero curl
         # exit is a reply that stopped short, whose end nobody read. It used to become a 000 and
-        # be passed over, so a stylesheet cut short was never scanned for its @imports and the
-        # run said `pass`. The capture trusts what curl printed, as `call` does.
+        # be passed over, so a stylesheet cut short was not followed for its @imports, what never
+        # arrived of it was never seen, and the run said `pass`. The capture trusts what curl
+        # printed, as `call` does.
         set +e
         status="$(curl -g -s --max-time "$max_time" -D "$f.head" -o "$f.body" -w '%{http_code} %{content_type}' "$site$path")"
         rc=$?

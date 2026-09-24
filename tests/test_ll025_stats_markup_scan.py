@@ -4,7 +4,8 @@ The check itself needs Docker. This pins, without it, the scanner it runs in the
 (scripts/no-third-party/loads.py): what it lets a page say and what it refuses. The stats page
 prints every link's target as text, and a target is a URL by nature, so the scan the site gets
 (a grep for any absolute URL) would fail the page as shipped. This one reads the HTML and flags
-only what a browser would go and fetch, or run.
+the ways markup names another origin or runs script, and lets text and links through; what it
+does not model is in the scanner's docstring.
 """
 
 from __future__ import annotations
@@ -90,9 +91,9 @@ LOADS = {
     "inline handler": '<body onload="fetch(1)">',
     "handler on a link": '<a href="/x" onclick="fetch(1)">x</a>',
     "handler, upper case": '<p ONCLICK="fetch(1)">x</p>',
-    # Round 1, F1: spellings a browser's URL parser reads as another origin. It removes every tab
-    # and newline from its input first, strips leading control characters, and takes any first
-    # character of a host (an IPv6 literal, empty user info, a percent escape, a full-width letter).
+    # Spellings a browser's URL parser reads as another origin: it removes every tab and newline
+    # from its input first, strips leading control characters, and takes any first character of a
+    # host (an IPv6 literal, empty user info, a percent escape, a full-width letter).
     "tab inside the slashes": '<img src="https:/\t/evil.example/x.png">',
     "newline after the slashes": '<img src="https://\nevil.example/x.png">',
     "newline entity after the slashes": '<link rel="stylesheet" href="https://&#10;fonts.googleapis.com/css2?family=Inter">',
@@ -105,8 +106,7 @@ LOADS = {
     "empty user info": '<img src="https://@evil.example/x.png">',
     "percent-encoded host": '<img src="https://%65vil.example/x.png">',
     "full-width host": '<img src="https://\uff45vil.example/x.png">',
-    # Round 1, F2: a CSS load without a literal `url(` or `@import`, or spelt so that only the
-    # tokenizer sees it.
+    # A CSS load without a literal `url(` or `@import`, or spelt so that only the tokenizer sees it.
     "image-set string": '<style>body{background:image-set("https://evil.example/x.png" 1x)}</style>',
     "image-set, second candidate": '<style>body{background:image-set("/a.png" 1x, "https://evil.example/x.png" 2x)}</style>',
     "image-set in a style attribute": "<p style=\"background:-webkit-image-set('https://evil.example/x.png' 1x)\">x</p>",
@@ -115,12 +115,12 @@ LOADS = {
     "css escape that eats a space": '<style>@import "\\68 ttps://evil.example/a.css";</style>',
     "comment after import": '<style>@import/**/"https://evil.example/a.css";</style>',
     "import of a data document": '<style>@import "data:text/css;base64,QGltcG9ydA==";</style>',
-    # Round 1, F3: places where the HTML parser and a browser's tree builder differ.
+    # Places where python's HTML parser and a browser's tree builder differ.
     "self-closing style": "<style/>@import url(https://evil.example/a.css);</style>",
     "self-closing style, spaced, upper case": "<STYLE />@import url(https://evil.example/a.css);</STYLE>",
     "svg style with slashes as entities": "<svg><style>@import url(https:&#x2f;&#x2f;evil.example/a.css);</style></svg>",
     "svg style with the function name as an entity": "<svg><style>@import &#117;rl(https://evil.example/a.css)</style></svg>",
-    # Round 1, F4: documents and scripts given by value.
+    # Documents and scripts given by value.
     "srcdoc": '<iframe srcdoc="&lt;script src=https://evil.example/x.js&gt;&lt;/script&gt;"></iframe>',
     "srcdoc loading an image": '<iframe srcdoc="&lt;img src=&quot;https://evil.example/x.png&quot;&gt;"></iframe>',
     "javascript url in an iframe": '<iframe src="javascript:fetch(1)"></iframe>',
@@ -177,7 +177,7 @@ NOT_LOADS = {
     "host-like text in an attribute that fetches nothing": '<p data-note="//example.org/x and https://[::1]/">x</p>',
     "ipv6 target as text": "<p>https://[2606:4700:4700::1111]/a and https://@host/</p>",
     "comment marks inside a url": '<style>body { background: url(/a.png) } /* https://example.org/x */</style>',
-    # Round 2: a data: URL that is not a document, and text in an attribute that holds no CSS.
+    # A data: URL that is not a document, and text in an attribute that holds no CSS.
     "empty data url on an icon": '<link rel="icon" href="data:,">',
     "data url with no media type": '<link rel="icon" href="data:;base64,AAAA">',
     "plain text data url": '<iframe src="data:text/plain,hello"></iframe>',

@@ -32,13 +32,14 @@ them and decides the rest.
 | `DELETE /-/api/links/<name>` | — | `204`, no body | `401` no/wrong key; `404` never existed; `410` already deleted |
 | `GET\|HEAD /<name>` | — | `302` + `Location` + `no-store` | `404` unknown (ADR-0003); `410` deleted (ADR-0003) |
 | `GET /-/api/links/<name>/stats` ⚠️ Added 2026-09-24 | — | `200` `{"days": {"YYYY-MM-DD": count}}` | `401` no/wrong key, checked before the name; `404` never existed; `410` deleted; an expired link is `200` with its kept counts |
-| `GET /-/stats` ⚠️ Added 2026-09-24 | — (HTTP Basic: any user name, the team key as the password) | `200` a plain HTML page: every link that has not been deleted, with its count for each UTC day | `401` no/wrong key, with `WWW-Authenticate: Basic` |
+| `GET /-/stats` ⚠️ Added 2026-09-24 | — (HTTP Basic: the team key as the password, with any user name that has no colon in it) | `200` a plain HTML page: every link that has not been deleted, with its count for each UTC day | `401` no/wrong key, with `WWW-Authenticate: Basic` |
 | `GET\|HEAD /<name>/` ⚠️ Added 2026-09-24 | — | as `GET\|HEAD /<name>` (ADR-0001e: `/<name>/` is treated as `/<name>`) | as `GET\|HEAD /<name>`; `/<name>//` is not a link (`404`) |
 
 > ⚠️ **Added 2026-09-24 (LL-027), after this ADR was accepted.** The three rows marked above
 > record routes `create_app` already registers, so that the table lists every route the service
-> serves. They are worded from `src/linkling/server/app.py` and checked against the running app;
-> the decision text and the four choices below are unchanged. `HEAD` on either `GET`-only route
+> serves; `tests/test_ll027_adr_lists_every_route.py` fails on a route with no row and on a row
+> with no route. They are worded from `src/linkling/server/app.py`, and each answer they name was
+> checked against the application. The decision text and the four choices below are unchanged. `HEAD` on either `GET`-only route
 > (`/-/api/links/<name>/stats`, `/-/stats`) answers `405`, for the reason choice d gives.
 > `/-/privacy.json` is not listed: it does not exist yet.
 

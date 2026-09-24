@@ -8,9 +8,9 @@
 # already running from this checkout, nor that stack's database:
 #   LINKLING_SMOKE_PROJECT  compose project name   (default linkling-smoke)
 #   LINKLING_SMOKE_PORT     host port for the api  (default 18000)
-#   LINKLING_SMOKE_MAX_TIME seconds one request may take, connecting and reading the reply both
-#                           counted (default 10): a service that accepts a connection and
-#                           never answers is `blind` after this long, not a hang
+#   LINKLING_SMOKE_MAX_TIME seconds one whole request may take, curl's --max-time (default 10):
+#                           a service that accepts a connection and never answers is `blind`
+#                           after this long, not a hang
 # The data directory is a fresh .smoke-data/run-<random>/, which is left behind afterwards:
 # on Linux it ends up owned by the container's uid, and removing it is not this script's to
 # risk. The team key is random per run and never printed.
@@ -39,11 +39,12 @@ rand() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
 
 project="${LINKLING_SMOKE_PROJECT:-linkling-smoke}"
 port="${LINKLING_SMOKE_PORT:-18000}"
-# curl's --max-time for every request to the service. Answers on loopback took 4 ms on average
-# and 18 ms at the slowest in 60 requests on Docker Desktop (LL-025), so 10 s is hundreds of times
-# what a healthy one needs, room for a loaded CI runner, and still a small fraction of the CI
-# job's own timeout, which is what a silent service used to cost. `--max-time 0` means no limit
-# at all, so a limit that is not a whole number above 0 is refused rather than passed on.
+# curl's --max-time for every request to the service. In one measurement (30 creates and 30
+# follows against the api container on Docker Desktop, over loopback) a request took 4 ms on
+# average and 18.5 ms at the slowest, so 10 s is over five hundred times what a healthy one
+# needed, room for a loaded CI runner, and still far below a CI job's own timeout, which is what
+# a silent service used to run into. `--max-time 0` means no limit at all, so a limit that is
+# not a whole number above 0 is refused rather than passed on.
 max_time="${LINKLING_SMOKE_MAX_TIME:-10}"
 case "$max_time" in
     ""|*[!0-9]*) blind "LINKLING_SMOKE_MAX_TIME must be a whole number of seconds above 0, not '$max_time'" ;;

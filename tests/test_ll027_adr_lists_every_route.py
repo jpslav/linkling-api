@@ -3,7 +3,7 @@
 The ADR is Accepted, so a route that ships without a row is a reader learning the surface wrong
 from a document that says it is settled. The route list here is read off the application, not
 written out again, so a route added later fails this until its row is added to the table (a
-correction by addition, marked and dated, as the ADR's note under the table says).
+correction by addition, marked and dated, like the three the note under the table records).
 """
 
 from __future__ import annotations

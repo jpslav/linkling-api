@@ -4,8 +4,8 @@ scripts/compose-smoke.sh and scripts/no-third-party-check.sh both need Docker, a
 in their own jobs. What they do when the service goes silent is never exercised there, because
 CI's service always answers. So this runs each one unchanged, with a stand-in `docker` on PATH
 whose `compose up` starts a listener that accepts every connection and never replies, and asks
-for a verdict inside a bound: `blind`, exit 2, naming the step that got no answer. Before the
-fix, both waited for the next request forever.
+for a verdict inside a bound: `blind`, exit 2, naming the step that got no answer. Without
+the limit neither comes back on its own, and the bound below kills it.
 
 The scripts are copied to a temporary tree first, because they create `.smoke-data/` beside
 themselves and the repository should not collect it.
