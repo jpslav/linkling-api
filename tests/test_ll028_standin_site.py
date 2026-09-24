@@ -318,12 +318,20 @@ def test_the_script_refuses_anything_but_one_fixture_name(tree, argv):
     assert not record.exists(), "the check ran on a usage error"
 
 
-def test_the_script_is_blind_when_it_cannot_make_its_temporary_copy(tree, tmp_path):
-    # A `mktemp` that fails: an unusable TMPDIR is not portable for this, since macOS's falls back.
+@pytest.mark.parametrize(
+    "broken, said",
+    [
+        ("mktemp", "blind: could not make a temporary directory"),
+        ("cp", "blind: could not make the mutated copy of the stand-in"),
+    ],
+)
+def test_the_script_is_blind_when_it_cannot_make_its_temporary_copy(tree, tmp_path, broken, said):
+    # A `mktemp` or `cp` that fails. (An unusable TMPDIR is not portable for the first: macOS's
+    # mktemp falls back to another directory.)
     shim = tmp_path / "shim"
     shim.mkdir()
-    (shim / "mktemp").write_text("#!/bin/sh\nexit 1\n")
-    (shim / "mktemp").chmod(0o755)
+    (shim / broken).write_text("#!/bin/sh\nexit 1\n")
+    (shim / broken).chmod(0o755)
     record = tree / "record.txt"
     env = {
         **os.environ,
@@ -337,7 +345,7 @@ def test_the_script_is_blind_when_it_cannot_make_its_temporary_copy(tree, tmp_pa
         env=env, capture_output=True, text=True, timeout=60,
     )
     assert done.returncode == 2, done.stdout + done.stderr
-    assert "blind: could not make a temporary directory" in done.stderr
+    assert said in done.stderr
     assert not record.exists(), "the check ran with no mutated stand-in"
 
 
