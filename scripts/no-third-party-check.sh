@@ -54,8 +54,9 @@
 #                           a service or site that accepts a connection and never answers is
 #                           `blind` after this long, not a hang
 #   LINKLING_WEB_DIR        the linkling-web checkout (default ../linkling-web, as compose.yaml);
-#                           any directory with a Dockerfile for a container that serves the site
-#                           on port 80 will do, which is how CI runs the stand-in
+#                           any directory whose Dockerfile builds a container that serves `/`,
+#                           `/privacy.html` and their stylesheets on port 80 will do, which is how
+#                           CI runs the stand-in
 # Each run gets a fresh .smoke-data/no3p-run-<random>/, holding the service's database and the
 # captures as tcpdump prints them. It is left behind, as compose-smoke.sh leaves its own: on
 # Linux the database directory ends up owned by the service's uid, 10001, which the entrypoint

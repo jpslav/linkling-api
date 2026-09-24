@@ -9,9 +9,10 @@ the check must catch. All of that needs Docker. What does not is pinned here, in
   stalled one really is held open), and the server resolves no name (the check fails any DNS
   query it captures);
 - the stand-in's base image is pinned by the same digest as the service's (ADR-0017);
-- every mode of the stand-in has a fixture in the script and a step in ci.yml, and the site job
-  runs the check without --api-only. Each comparison is between sets read out of a file, and an
-  empty read must not look like agreement, so each one is asserted against the set it must be;
+- every defect mode of the stand-in (all but `none`, the clean site, which is the job's first
+  step) has a fixture in the script and a step in ci.yml, and the site job runs the check without
+  --api-only. Each comparison is between sets read out of a file, and an empty read must not look
+  like agreement, so each one is asserted against the set it must be;
 - the script judges the check's exit status AND its last line, on a stand-in check that ends as
   told: it passes when the check ends the way the fixture requires, and not when the check says
   `pass`, ends red in another way, or is blind for a reason that is not the fixture's.
@@ -132,7 +133,7 @@ def test_the_cut_short_reply_promises_more_than_it_sends_and_closes():
 
 def test_the_stalled_reply_sends_its_headers_and_then_holds_the_connection_open():
     with serving("stalled-reply") as port:
-        # The headers get the generous default, so a slow runner cannot end this before it starts;
+        # The headers get `_get`'s 5 s, so a slow runner is unlikely to end this before it starts;
         # only the read of the body that never comes is bounded tightly.
         conn, resp = _get(port, "/second.css")
         assert resp.status == 200
@@ -275,7 +276,8 @@ def test_the_time_bound_is_forced_for_the_stalled_fixture_only(tree):
 @pytest.mark.parametrize(
     "fixture, output, status, expected_exit",
     [
-        # The check went green: the mutation was not caught, which is what LL-025 was.
+        # The check went green: the mutation was not caught (for the cut-short reply, that is the
+        # defect LL-025 fixed).
         ("external-stylesheet", "pass", 0, 1),
         ("cut-short-reply", "pass", 0, 1),
         ("stalled-reply", "pass", 0, 1),

@@ -13,10 +13,12 @@ red on it, in the way named here:
 
   external-stylesheet  `/` links a stylesheet on another origin. The check must `fail`, naming it.
   cut-short-reply      /second.css promises 500 bytes more than it sends and closes the
-                       connection, as LL-025's stylesheet did, which used to make the crawl `pass`.
-                       The check must be `blind`: it did not see the whole reply.
-  stalled-reply        the same, but the connection is held open. Only the check's own time bound
-                       (curl's --max-time) ends it. The check must be `blind`, after that bound.
+                       connection. Before commit 74db240 (LL-025) the crawl said `pass` on a
+                       stylesheet like this. The check must be `blind`: it did not see the whole reply.
+  stalled-reply        the same, but the connection is held open, until the client hangs up or
+                       STALL_SECONDS pass. The check must be `blind` in its own time bound (curl's
+                       --max-time, 5 s in CI), long before that. A check that had lost the bound
+                       would end STALL_SECONDS later on a different message, which is red as well.
 
 The server resolves no name and opens no connection of its own: the check captures every packet
 this container sends, and any DNS query fails it. `http.server` would look up its own host name

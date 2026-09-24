@@ -8,8 +8,8 @@
 #   external-stylesheet  `fail`, naming the stylesheet on another origin that the home page links
 #   cut-short-reply      `blind`, because a stylesheet's reply stopped before its end (before
 #                        LL-025, the check said `pass` here)
-#   stalled-reply        `blind`, because a stylesheet's reply never ended and only the check's
-#                        own time bound (LINKLING_NO3P_MAX_TIME, forced to 5 here) stopped it
+#   stalled-reply        `blind`, because a stylesheet's reply never ended and the check's own time
+#                        bound (LINKLING_NO3P_MAX_TIME, forced to 5 here) stopped it
 #
 # It judges the exit status AND the check's last line, not the status alone: `blind` is exit 2
 # whether the crawl saw a cut-short reply or the stack never came up, and only the first is what
@@ -22,8 +22,9 @@
 #
 # Usage: scripts/no-third-party-standin.sh external-stylesheet|cut-short-reply|stalled-reply
 # Exit status: 0 `pass` (the check ended red, as this fixture requires), 1 `fail` (it ended any
-# other way: green, or red in another way), 2 `blind` (it was blind for a reason that is not this
-# fixture's, or there is no stand-in to mutate), 64 for a usage error.
+# other way: green, or red in another way), 2 `blind` (the check was blind for a reason that is not
+# this fixture's, or there is no stand-in to mutate, or the mutated copy could not be built), 64
+# for a usage error.
 
 set -euo pipefail
 
