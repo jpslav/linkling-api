@@ -1,0 +1,5 @@
+# --mutate api-page: the stats page names a third-party stylesheet (sitecustomize-stats-page.py).
+services:
+  api:
+    volumes:
+      - ./scripts/no-third-party/mutations/sitecustomize-stats-page.py:/usr/local/lib/python3.12/site-packages/sitecustomize.py:ro

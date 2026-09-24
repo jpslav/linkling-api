@@ -27,7 +27,7 @@ link deletes its counts. The CLI is a separate piece of work and is not here yet
 | `GET /-/stats` | A plain HTML page: every link that has not been deleted, and its count for each UTC day. Needs the team key over HTTP Basic. |
 
 `/-/stats` is opened in a browser, so it takes HTTP Basic rather than the Bearer header the
-API uses (`docs/adr/0006`): any user name, and the team key as the password. It lists every
+API uses (`docs/adr/0006`): any user name without a colon in it, and the team key as the password. It lists every
 link that has not been deleted, by name, with its target and its day-by-day counts, newest
 day first. A link that has expired is listed and marked, and keeps its counts; a deleted
 link is not listed, because its target and its counts went when it was deleted. Opening
@@ -99,12 +99,20 @@ counts again, and loads the site. Anything but a reply to
 its own requests fails the run, and so does any DNS lookup. Each run also plants a connection
 and a lookup of its own, and a capture that misses them is reported blind rather than clean.
 It also fetches the site's pages and every stylesheet they pull in, and fails on any
-absolute URL, `<script>` or inline event handler in what they serve.
+absolute URL, `<script>` or inline event handler in what they serve. The service's own stats
+page prints each link's target as text, so it is read as HTML instead
+(`scripts/no-third-party/loads.py`, whose docstring says what it flags and what it does not
+model): it fails on markup that names another origin or runs script (a `<script>`, an inline
+event handler, another origin's URL in a `src`, in an `href` other than a link's, or in CSS),
+not on a target shown as text.
+A request that gets no answer within 10 seconds (`LINKLING_SMOKE_MAX_TIME` and
+`LINKLING_NO3P_MAX_TIME` change that) ends either script as blind, naming what it was asking
+for, rather than waiting for CI's own timeout.
 It cannot see routes it does not exercise, anything after the run ends, what a browser does
 with the pages, what the host does outside the containers, or a proxy you put in front. CI
 runs it with `--api-only`, because CI cannot fetch `linkling-web`, and runs it again with a
-deliberate leak to show that it goes red. Run it with the site from a checkout that has
-`linkling-web` beside it.
+deliberate leak to show that it goes red, and again with a stats page that names a third-party
+stylesheet. Run it with the site from a checkout that has `linkling-web` beside it.
 
 ### Where the database lives
 

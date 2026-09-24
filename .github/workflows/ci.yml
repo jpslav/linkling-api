@@ -32,6 +32,8 @@ jobs:
   # Only the service: the site needs the private linkling-web checkout, which this workflow's
   # token cannot fetch (ADR-0015). The second step is the red that makes the first one mean
   # something: a service that fetches each link's target on create must fail, naming the lookup.
+  # The third is the same for the stats page's markup: one that names a third-party stylesheet
+  # must fail, naming the host.
   no-third-party:
     name: no-third-party
     runs-on: ubuntu-latest
@@ -45,6 +47,13 @@ jobs:
           status=$?
           echo "$out"
           [ "$status" = 1 ] && grep -q "including a lookup of the link's target host" <<<"$out"
+      - name: the check fails a service whose stats page loads from a third party
+        run: |
+          set +e
+          out="$(scripts/no-third-party-check.sh --api-only --mutate api-page 2>&1)"
+          status=$?
+          echo "$out"
+          [ "$status" = 1 ] && grep -q "fonts.googleapis.com" <<<"$out"
 
   # LL-022: websockets/wsproto must not become importable (ADR-0017 ii) -- either one makes
   # uvicorn log a rejected WebSocket's client address to its error logger, which

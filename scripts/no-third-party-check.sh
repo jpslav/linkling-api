@@ -20,13 +20,23 @@
 # That is deliberately stricter than "loads nothing": an outbound link a browser would not
 # fetch fails too, until someone adds a reviewed exception here.
 #
+# The service's own `/-/stats` page is judged by what it serves too, but not by that scan: it
+# prints every link's target as text, and a target is a URL. It is read as HTML instead
+# (scripts/no-third-party/loads.py, whose docstring says what it flags and what it does not
+# model), and fails on markup that names another origin or runs script: a <script>, an inline
+# event handler, another origin's URL in an attribute that fetches (a src, a srcset, an href
+# other than an <a>'s) or in CSS. A target shown as text, and a link a reader has to follow, pass.
+# Its response headers fail on any absolute or protocol-relative URL, as the site's do. The scan
+# is proved before it is trusted: it must flag a load the check plants in a page of its own, or
+# the run is blind.
+#
 # What this cannot see, so that nobody reads more into a pass than it holds: routes and paths
 # it does not exercise; anything the services would do after the run's window (on a timer, say);
 # what a browser does with the pages, since no browser runs; what the host or Docker Desktop
 # does outside the containers (the image build, the published-port proxy); and a proxy a
 # deployer puts in front. The README's "Run it with Docker" names the same limits.
 #
-# Usage: scripts/no-third-party-check.sh [--api-only] [--mutate api|web-net|web-page]
+# Usage: scripts/no-third-party-check.sh [--api-only] [--mutate api|api-page|web-net|web-page]
 #   --api-only  check only the service. CI uses it, because CI cannot fetch the private
 #               linkling-web checkout the site is built from (ADR-0015). Without it, a missing
 #               checkout is blind, never a silent skip.
@@ -37,6 +47,9 @@
 #   LINKLING_NO3P_PROJECT   compose project name   (default linkling-no3p)
 #   LINKLING_NO3P_PORT      host port for the api  (default 18100)
 #   LINKLING_NO3P_WEB_PORT  host port for the site (default 18180)
+#   LINKLING_NO3P_MAX_TIME  seconds one whole request may take, curl's --max-time (default 10):
+#                           a service or site that accepts a connection and never answers is
+#                           `blind` after this long, not a hang
 #   LINKLING_WEB_DIR        the linkling-web checkout (default ../linkling-web, as compose.yaml)
 # Each run gets a fresh .smoke-data/no3p-run-<random>/, holding the service's database and the
 # captures as tcpdump prints them. It is left behind, as compose-smoke.sh leaves its own: on
@@ -58,7 +71,7 @@ cd "$(dirname "$0")/.."
 
 fail() { echo "fail: $*" >&2; exit 1; }
 blind() { echo "blind: $*" >&2; exit 2; }
-usage() { echo "usage: $0 [--api-only] [--mutate api|web-net|web-page]" >&2; exit 64; }
+usage() { echo "usage: $0 [--api-only] [--mutate api|api-page|web-net|web-page]" >&2; exit 64; }
 
 api_only=0
 mutate=""
@@ -71,10 +84,22 @@ while [ $# -gt 0 ]; do
     shift
 done
 case "$mutate" in
-    ""|api) ;;
+    ""|api|api-page) ;;
     web-net|web-page) [ "$api_only" = 0 ] || usage ;;
     *) usage ;;
 esac
+
+# curl's --max-time for every request the check makes. In one measurement (30 creates and 30
+# follows against the api container on Docker Desktop, over loopback) a request took 4 ms on
+# average and 18.5 ms at the slowest, so 10 s is over five hundred times what a healthy one
+# needed, room for a loaded CI runner, and still far below a CI job's own timeout, which is what
+# a silent service used to run into. `--max-time 0` means no limit at all, so a limit that is
+# not a whole number above 0 is a usage error, not passed on.
+max_time="${LINKLING_NO3P_MAX_TIME:-10}"
+case "$max_time" in
+    ""|*[!0-9]*) echo "LINKLING_NO3P_MAX_TIME must be a whole number of seconds above 0, not '$max_time'" >&2; exit 64 ;;
+esac
+[ "$max_time" -ge 1 ] || { echo "LINKLING_NO3P_MAX_TIME must be a whole number of seconds above 0, not '$max_time'" >&2; exit 64; }
 
 command -v docker >/dev/null 2>&1 || blind "docker is not on PATH"
 command -v curl >/dev/null 2>&1 || blind "curl is not on PATH"
@@ -171,42 +196,100 @@ fi
 
 # --- exercise -------------------------------------------------------------------------------
 
-expect() { # <what> <wanted> <got>
-    # Of the steps judged here, only the create step keeps its response body, in
-    # $work/create.body. It is shown only if a step fails while the file is still there and not
-    # empty, and the first step to pass deletes it, so a later step's failure never prints it as
-    # if it were its own answer: what a later step got is the '$3' below (LL-023).
-    if [ "$3" = "$2" ]; then rm -f "$work/create.body"; return 0; fi
-    if [ -s "$work/create.body" ]; then cat "$work/create.body" >&2; echo >&2; fi
-    blind "$1 answered '$3', not '$2', so the run did not exercise what it claims"
+# Why curl gave up, by its exit status. compose-smoke.sh's ask() has its own, shorter table of
+# these; the only thing the two scripts share is scripts/lib/port-check.sh.
+why_curl() {
+    case "$1" in
+        7) echo "curl could not connect" ;;
+        18) echo "the reply stopped before its end" ;;
+        28) echo "curl timed out after ${max_time}s" ;;
+        52) echo "the connection closed with no reply" ;;
+        56) echo "receiving the reply failed" ;;
+        *) echo "curl exit status $1" ;;
+    esac
+}
+
+# call <name> <what> <wanted> <-w format> <curl args...>: one request to the service, judged on
+# what curl printed, which is left in $answer. Its reply body is kept in $work/<name>.body, one
+# file per step, and a step whose reply is the wrong one prints its own body (and no other
+# step's) before the verdict, so what the service said is in the log (LL-023, LL-025). Every
+# way of not getting the wanted reply is `blind`, and names the step: curl prints 000 when no
+# status came back, whatever became of the connection (LL-025 bounds the wait), and a status that
+# arrived with a body cut short is not the whole reply. The capture is bracketed with `set +e`
+# and trusts what curl printed: a `|| answer=000` on the substitution would overwrite a status
+# curl did print whenever its exit status is non-zero for any other reason
+# (observations/2026-09-23-set-minus-e-fallback-clobbers-a-captured-value.md in the program repo).
+call() {
+    local name="$1" what="$2" wanted="$3" fmt="$4" rc
+    shift 4
+    set +e
+    answer="$(curl -s --max-time "$max_time" -o "$work/$name.body" -w "$fmt" "$@")"
+    rc=$?
+    set -e
+    case "$answer" in
+        ""|000*) blind "no answer from $base while $what ($(why_curl "$rc")), so the run did not exercise what it claims" ;;
+    esac
+    if [ "$answer" != "$wanted" ]; then
+        if [ -s "$work/$name.body" ]; then
+            echo "--- the reply to $what:" >&2
+            head -c 2000 "$work/$name.body" >&2
+            echo >&2
+        fi
+        blind "$what answered '$answer', not '$wanted', so the run did not exercise what it claims"
+    fi
+    [ "$rc" = 0 ] || blind "$what answered '$answer' but its reply did not arrive whole ($(why_curl "$rc")), so what it said was not seen"
 }
 auth=(-H "Authorization: Bearer $LINKLING_API_KEY")
 
-# Built outside the $(...) below: macOS's bash 3.2 mangles \" inside a quoted substitution.
+# Built outside the command below: macOS's bash 3.2 mangles \" inside a quoted substitution.
 body="{\"url\": \"$target\", \"name\": \"$canary\"}"
-expect "creating the link" 201 "$(curl -s -o "$work/create.body" -w '%{http_code}' -X POST "$base/-/api/links" \
-    "${auth[@]}" -H 'Content-Type: application/json' -d "$body")"
-expect "following the link" "302 $target" "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$base/$canary")"
-expect "following a name that does not exist" 404 "$(curl -s -o /dev/null -w '%{http_code}' "$base/$canary-absent")"
+call create "creating the link" 201 '%{http_code}' -X POST "$base/-/api/links" \
+    "${auth[@]}" -H 'Content-Type: application/json' -d "$body"
+call follow "following the link" "302 $target" '%{http_code} %{redirect_url}' "$base/$canary"
+call absent "following a name that does not exist" 404 '%{http_code}' "$base/$canary-absent"
 # HTTP Basic with an empty user name, as R-010's verify line sends it. It runs while the link
-# still exists, so a page that answered 200 without listing the link is blind, not a pass.
-expect "the stats page with the team key" 200 "$(curl -s -o "$work/stats.body" -w '%{http_code}' -u ":$LINKLING_API_KEY" "$base/-/stats")"
+# still exists, so a page that answered 200 without listing the link is blind, not a pass. Its
+# headers are kept too, for the markup scan below.
+call stats "the stats page with the team key" 200 '%{http_code}' -D "$work/stats.head" \
+    -u ":$LINKLING_API_KEY" "$base/-/stats"
 grep -qF "$canary" "$work/stats.body" \
     || blind "the stats page answered 200 without the link the check made, so it was not exercised"
-expect "the stats page without a credential" 401 "$(curl -s -o /dev/null -w '%{http_code}' "$base/-/stats")"
+call stats-anon "the stats page without a credential" 401 '%{http_code}' "$base/-/stats"
 # The link's counts, while it still exists and has been followed exactly once above: an answer
 # that is 200 without that one follow in it is blind, not a pass. The date is matched as a
 # shape, not read off the clock, so a run that straddles midnight UTC cannot fail on it.
-expect "the link's counts with the team key" 200 "$(curl -s -o "$work/link-stats.body" -w '%{http_code}' "$base/-/api/links/$canary/stats" "${auth[@]}")"
-grep -qE '"days": *\{"[0-9]{4}-[0-9]{2}-[0-9]{2}": *1\}' "$work/link-stats.body" \
+call counts "the link's counts with the team key" 200 '%{http_code}' "$base/-/api/links/$canary/stats" "${auth[@]}"
+grep -qE '"days": *\{"[0-9]{4}-[0-9]{2}-[0-9]{2}": *1\}' "$work/counts.body" \
     || blind "the link's counts answered 200 without the one follow the check made, so it was not exercised"
-expect "the link's counts without a credential" 401 "$(curl -s -o /dev/null -w '%{http_code}' "$base/-/api/links/$canary/stats")"
-expect "deleting the link" 204 "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$base/-/api/links/$canary" "${auth[@]}")"
-expect "following the deleted link" 410 "$(curl -s -o /dev/null -w '%{http_code}' "$base/$canary")"
-expect "the deleted link's counts" 410 "$(curl -s -o /dev/null -w '%{http_code}' "$base/-/api/links/$canary/stats" "${auth[@]}")"
+call counts-anon "the link's counts without a credential" 401 '%{http_code}' "$base/-/api/links/$canary/stats"
+call delete "deleting the link" 204 '%{http_code}' -X DELETE "$base/-/api/links/$canary" "${auth[@]}"
+call gone "following the deleted link" 410 '%{http_code}' "$base/$canary"
+call gone-counts "the deleted link's counts" 410 '%{http_code}' "$base/-/api/links/$canary/stats" "${auth[@]}"
 echo "api exercised: create, follow, follow of a missing name, /-/stats with and without the team key, /-/api/links/<name>/stats with and without the team key, delete, follow of the deleted link, /-/api/links/<name>/stats of the deleted link"
 
 findings=()
+
+# The stats page's markup and headers, fetched by the exercise above. Not by the site's grep
+# below: the page prints every link's target as text, and loads.py says what it flags instead.
+# A scan that finds nothing looks like a clean page, so it is shown first that it can find
+# something: it gets a page of its own that loads a stylesheet from a .invalid host, and must
+# name that host.
+loads() { dc exec -T obs-api python3 /usr/local/bin/loads.py "$@"; }
+planted='<!doctype html><title>control</title><link rel="stylesheet" href="https://loads-control.invalid/x.css">'
+seen="$(printf '%s\n' "$planted" | loads html)" \
+    || blind "could not run the markup scan in the api observer, so the stats page was not scanned"
+case "$seen" in
+    *loads-control.invalid*) ;;
+    *) blind "the markup scan did not flag the load it plants in a page of its own, so a clean stats page proves nothing" ;;
+esac
+[ -s "$work/stats.head" ] || blind "no response headers were kept for /-/stats, so they were not scanned"
+page_hits="$(loads html <"$work/stats.body")" \
+    || blind "could not run the markup scan on the stats page"
+head_hits="$(loads headers <"$work/stats.head")" \
+    || blind "could not run the header scan on the stats page"
+hits="$(printf '%s\n%s\n' "$page_hits" "$head_hits" | sed -n '/./p' | sed -n '1,3p')"
+[ -z "$hits" ] || findings+=("api serves /-/stats with a third-party load: $(tr '\n' ' ' <<<"$hits")")
+echo "stats page scanned: markup and headers"
 
 if [ "$api_only" = 0 ]; then
     # Breadth-first from the two pages, following every same-origin stylesheet a page links and
@@ -221,10 +304,20 @@ if [ "$api_only" = 0 ]; then
         f="$work/site-$fetched"
         fetched=$((fetched + 1))
         printf '%s\n' "$path" >"$f.path"
-        # -g: a path is a path, not one of curl's globs. A failed fetch is an answer of 000,
-        # which the checks below treat as unseen, rather than an exit that skips the verdict.
-        status="$(curl -g -s -D "$f.head" -o "$f.body" -w '%{http_code} %{content_type}' "$site$path")" \
-            || status="000"
+        # -g: a path is a path, not one of curl's globs. A fetch that did not finish is `blind`
+        # here, never skipped (LL-025): 000 is no status at all, and a status with a non-zero curl
+        # exit is a reply that stopped short, whose end nobody read. It used to become a 000 and
+        # be passed over, so a stylesheet cut short was not followed for its @imports, what never
+        # arrived of it was never seen, and the run said `pass`. The capture trusts what curl
+        # printed, as `call` does.
+        set +e
+        status="$(curl -g -s --max-time "$max_time" -D "$f.head" -o "$f.body" -w '%{http_code} %{content_type}' "$site$path")"
+        rc=$?
+        set -e
+        case "$status" in
+            ""|000*) blind "no answer from $site for $path ($(why_curl "$rc")), so what the site serves there was not seen" ;;
+        esac
+        [ "$rc" = 0 ] || blind "the site's $path answered '${status%% *}' but its reply did not arrive whole ($(why_curl "$rc")), so what it serves there was not seen"
         case "$status" in
             "200 text/html"*) pages="$pages $path"; kind=html ;;
             "200 text/css"*) sheets=$((sheets + 1)); kind=css ;;
