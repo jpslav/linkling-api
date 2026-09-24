@@ -77,7 +77,7 @@ esac
 if [ "$status" = "$want_status" ] && [ "$text_ok" = 1 ]; then
     echo "pass: the check ended $status on the '$fixture' defect, as it must"
 elif [ "$status" = 2 ]; then
-    blind "the check was blind on '$fixture' for another reason, so the fixture showed nothing: $last"
+    blind "the check was blind on '$fixture' in a way that is not this fixture's, so it showed nothing. It must end: $want_text ... It ended: $last"
 else
-    fail "the check must end $want_status ('${want_text%%:*}') on '$fixture'; it ended $status: $last"
+    fail "the check must end $want_status ('${want_text%%:*}') on '$fixture'. It must end: $want_text ... It ended $status: $last"
 fi
