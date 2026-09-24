@@ -31,22 +31,41 @@ another origin's URL in a response nobody asked to be sent away).
 
 from __future__ import annotations
 
+import html
 import re
 import sys
 from html.parser import HTMLParser
 
 # The start of an absolute or protocol-relative URL inside a longer value: at its start or after
-# something that separates one URL from the next (space, comma in a srcset, `=` in a refresh's
-# `url=`, a quote or bracket around it). A scheme takes any run of slashes and backslashes after
-# it, and two on their own are protocol-relative. `[a-z0-9]` after them keeps `https:` alone, and
-# `a//b` in the middle of a word, from counting.
-_EXTERNAL = re.compile(r"""(?:^|[\s,;=('"<])(?:https?:[/\\]*|[/\\]{2})[a-z0-9]""", re.IGNORECASE)
+# something that separates one URL from the next (a control character or space, a comma in a
+# srcset, `=` in a refresh's `url=`, a quote or bracket around it). A scheme takes any run of
+# slashes and backslashes after it, and two on their own are protocol-relative. What follows may
+# be anything a host or its user info can start with (`[` of an IPv6 literal, `@`, a percent
+# escape, a non-ASCII letter): only a control character, a space, a slash, a quote or a bracket
+# does not count, which keeps `https:` alone, and `a//b` in the middle of a word, out.
+_URL_START = r"""(?:https?:[/\\]*|[/\\]{2})[^\x00-\x20/\\'")<>]"""
+_EXTERNAL = re.compile(r"""(?:^|[\x00-\x20,;=('"<])""" + _URL_START, re.IGNORECASE)
 
-# `url(` or `@import` followed by one, as CSS spells a load.
-_CSS_LOAD = re.compile(
-    r"""(?:url\(\s*|@import\s*(?:url\(\s*)?)["']?\s*(?:https?:[/\\]*|[/\\]{2})[a-z0-9]""",
-    re.IGNORECASE,
-)
+# What a URL parser drops from anywhere in its input, before it looks at the scheme.
+_DROPPED = re.compile(r"[\t\n\r]")
+
+# A `javascript:` URL, and a `data:` URL that is not an image: a document given by value, which
+# can hold anything, so nothing about the origin of what it loads can be read off the markup.
+_JAVASCRIPT_URL = re.compile(r"^[\x00-\x20]*javascript:", re.IGNORECASE)
+_DATA_DOCUMENT = re.compile(r"^[\x00-\x20]*data:(?!\s*image/)", re.IGNORECASE)
+
+# CSS naming an image or stylesheet from another origin: `url(` followed by one, and a quoted
+# string that starts with one (`@import "..."`, and every candidate of `image-set()` after the
+# first, which are strings and not `url()`). `_CSS_URL_FN` is the first alone, for the many
+# attributes (`fill`, `filter`, `mask`, ...) that take a `url()` and nothing else.
+_CSS_URL_FN = re.compile(r"""url\(\s*["']?\s*""" + _URL_START, re.IGNORECASE)
+_CSS_LOAD = re.compile(r"""(?:url\(\s*["']?|["']|@import)\s*""" + _URL_START, re.IGNORECASE)
+_CSS_IMPORT_DATA = re.compile(r"""@import\s*(?:url\(\s*)?["']?\s*data:""", re.IGNORECASE)
+
+# A CSS escape: a backslash and one to six hex digits (and one space, which ends them), or a
+# backslash and any other character. The tokenizer decodes these before it reads a name or a
+# string, so `\75rl(` is `url(` and `"\68ttps://..."` is a string starting `https://`.
+_CSS_ESCAPE = re.compile(r"\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|(.))", re.DOTALL)
 
 # Attributes a browser fetches from. `content` is only one on <meta http-equiv=refresh>, and
 # `style` is CSS, both handled apart.
@@ -57,8 +76,14 @@ _URL_ATTRS = frozenset(
     }
 )  # fmt: skip
 
+# Attributes that hold a URL a script may be run from, though nothing is fetched from it.
+_ACTIONS = frozenset({"action", "formaction"})
+
 # Tags whose URLs are followed by the reader, not by the page.
 _NAVIGATION = frozenset({"a", "area", "form"})
+
+# Tags that embed a document, where a `data:` URL is a whole page or stylesheet given by value.
+_DOCUMENTS = frozenset({"iframe", "frame", "object", "embed", "link"})
 
 _SHOWN = 120
 
@@ -67,6 +92,40 @@ def _shown(value: str) -> str:
     """One line, and short, with the start of the value (the host) kept."""
     value = " ".join(value.split())
     return value if len(value) <= _SHOWN else value[:_SHOWN] + "..."
+
+
+def _css_escape(match: re.Match) -> str:
+    if match.group(1) is None:
+        return "" if match.group(2) == "\n" else match.group(2)
+    code = int(match.group(1), 16)
+    return chr(code) if 0 < code <= 0x10FFFF and not 0xD800 <= code <= 0xDFFF else "�"
+
+
+def _css_text(text: str) -> str:
+    """The CSS as its tokenizer reads it: an escape is the character it names."""
+    return _CSS_ESCAPE.sub(_css_escape, text)
+
+
+def _attribute_load(tag: str, name: str, value: str, refresh: bool) -> str | None:
+    """Why this attribute makes a browser run something, or fetch something from another origin."""
+    if name.startswith("on") and name[2:].isalpha():
+        return "is an inline event handler"
+    url = _DROPPED.sub("", value)
+    if (name in _URL_ATTRS or name in _ACTIONS) and _JAVASCRIPT_URL.match(url):
+        return "runs script"
+    css = _css_text(value)
+    if name == "style":
+        if _CSS_LOAD.search(css) or _CSS_IMPORT_DATA.search(css):
+            return "loads from another origin"
+    elif _CSS_URL_FN.search(css):
+        return "loads from another origin"
+    if tag in _NAVIGATION:
+        return None
+    if name in _URL_ATTRS and tag in _DOCUMENTS and _DATA_DOCUMENT.match(url):
+        return "embeds a document by value"
+    if (name in _URL_ATTRS or (refresh and name == "content")) and _EXTERNAL.search(url):
+        return "loads from another origin"
+    return None
 
 
 class _Loads(HTMLParser):
@@ -84,21 +143,33 @@ class _Loads(HTMLParser):
             n == "http-equiv" and v.strip().lower() == "refresh" for n, v in attrs
         )
         for name, value in attrs:
-            if name.startswith("on") and name[2:].isalpha():
-                self.found.append(f'<{tag} {name}="{_shown(value)}"> is an inline event handler')
-            elif name == "style" and _CSS_LOAD.search(value):
-                self.found.append(f'<{tag} style="{_shown(value)}"> loads from another origin')
-            elif tag in _NAVIGATION:
+            if name == "srcdoc":
+                # A page given by value: judged as a page, whatever tag carries it.
+                for finding in scan_html(value):
+                    self.found.append(f'<{tag} srcdoc="{_shown(value)}"> holds a page with {finding}')
                 continue
-            elif (name in _URL_ATTRS or (refresh and name == "content")) and _EXTERNAL.search(value):
-                self.found.append(f'<{tag} {name}="{_shown(value)}"> loads from another origin')
+            reason = _attribute_load(tag, name, value, refresh)
+            if reason:
+                self.found.append(f'<{tag} {name}="{_shown(value)}"> {reason}')
+
+    def handle_startendtag(self, tag, attrs):
+        # html.parser reads `<style/>` as an element that is over at once, so the CSS after it
+        # would be judged as text. A browser ignores the slash on `style` and reads raw text up to
+        # `</style>`, so this is a start tag, as it is there.
+        self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag):
         if tag == "style":
             self._style_open = False
 
     def handle_data(self, data):
-        if self._style_open and _CSS_LOAD.search(data):
+        if not self._style_open:
+            return
+        # html.parser hands a <style>'s text over raw. A browser decodes character references in
+        # it when the <style> is inside <svg> or <math>, so this reads both ways: more matches,
+        # never fewer.
+        css = _css_text(html.unescape(data))
+        if _CSS_LOAD.search(css) or _CSS_IMPORT_DATA.search(css):
             self.found.append(f"<style> loads from another origin: {_shown(data)}")
 
 
@@ -113,7 +184,7 @@ def scan_headers(text: str) -> list[str]:
     return [
         f"header {_shown(line)} names another origin"
         for line in text.splitlines()
-        if _EXTERNAL.search(line)
+        if _EXTERNAL.search(_DROPPED.sub("", line))
     ]
 
 

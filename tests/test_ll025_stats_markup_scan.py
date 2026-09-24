@@ -90,6 +90,48 @@ LOADS = {
     "inline handler": '<body onload="fetch(1)">',
     "handler on a link": '<a href="/x" onclick="fetch(1)">x</a>',
     "handler, upper case": '<p ONCLICK="fetch(1)">x</p>',
+    # Round 1, F1: spellings a browser's URL parser reads as another origin. It removes every tab
+    # and newline from its input first, strips leading control characters, and takes any first
+    # character of a host (an IPv6 literal, empty user info, a percent escape, a full-width letter).
+    "tab inside the slashes": '<img src="https:/\t/evil.example/x.png">',
+    "newline after the slashes": '<img src="https://\nevil.example/x.png">',
+    "newline entity after the slashes": '<link rel="stylesheet" href="https://&#10;fonts.googleapis.com/css2?family=Inter">',
+    "tab entity inside the scheme": '<img src="ht&#9;tps://evil.example/x.png">',
+    "tab between protocol-relative slashes": '<img src="/\t/evil.example/x.png">',
+    "leading control character": '<img src="\x01https://evil.example/x.png">',
+    "leading space": '<img src=" https://evil.example/x.png">',
+    "ipv6 host": '<link rel="stylesheet" href="https://[2606:4700:4700::1111]/a.css">',
+    "ipv6 host, protocol-relative": '<img src="//[2606:4700:4700::1111]/a.png">',
+    "empty user info": '<img src="https://@evil.example/x.png">',
+    "percent-encoded host": '<img src="https://%65vil.example/x.png">',
+    "full-width host": '<img src="https://\uff45vil.example/x.png">',
+    # Round 1, F2: a CSS load without a literal `url(` or `@import`, or spelt so that only the
+    # tokenizer sees it.
+    "image-set string": '<style>body{background:image-set("https://evil.example/x.png" 1x)}</style>',
+    "image-set, second candidate": '<style>body{background:image-set("/a.png" 1x, "https://evil.example/x.png" 2x)}</style>',
+    "image-set in a style attribute": "<p style=\"background:-webkit-image-set('https://evil.example/x.png' 1x)\">x</p>",
+    "css escape in the function name": "<style>body{background:\\75rl(https://evil.example/x.png)}</style>",
+    "css escape in a string": '<style>@import "\\68ttps://evil.example/a.css";</style>',
+    "css escape that eats a space": '<style>@import "\\68 ttps://evil.example/a.css";</style>',
+    "comment after import": '<style>@import/**/"https://evil.example/a.css";</style>',
+    "import of a data document": '<style>@import "data:text/css;base64,QGltcG9ydA==";</style>',
+    # Round 1, F3: places where the HTML parser and a browser's tree builder differ.
+    "self-closing style": "<style/>@import url(https://evil.example/a.css);</style>",
+    "self-closing style, spaced, upper case": "<STYLE />@import url(https://evil.example/a.css);</STYLE>",
+    "svg style with slashes as entities": "<svg><style>@import url(https:&#x2f;&#x2f;evil.example/a.css);</style></svg>",
+    "svg style with the function name as an entity": "<svg><style>@import &#117;rl(https://evil.example/a.css)</style></svg>",
+    # Round 1, F4: documents and scripts given by value.
+    "srcdoc": '<iframe srcdoc="&lt;script src=https://evil.example/x.js&gt;&lt;/script&gt;"></iframe>',
+    "srcdoc loading an image": '<iframe srcdoc="&lt;img src=&quot;https://evil.example/x.png&quot;&gt;"></iframe>',
+    "javascript url in an iframe": '<iframe src="javascript:fetch(1)"></iframe>',
+    "javascript url in a link": '<a href="javascript:fetch(1)">x</a>',
+    "javascript url with a tab in the scheme": '<a href="java\tscript:fetch(1)">x</a>',
+    "javascript url in a form action": '<form action="javascript:fetch(1)"></form>',
+    "svg fill from another origin": '<svg><rect fill="url(https://evil.example/x.svg#g)"></rect></svg>',
+    "svg filter from another origin": "<svg><rect filter=\"url('//evil.example/x.svg#f')\"></rect></svg>",
+    "data document in an iframe": '<iframe src="data:text/html;base64,PHNjcmlwdD4="></iframe>',
+    "data stylesheet in a link": '<link rel="stylesheet" href="data:text/css;base64,QGltcG9ydA==">',
+    "data object": '<object data="data:application/x-shockwave-flash;base64,AAAA"></object>',
 }
 
 
@@ -119,6 +161,17 @@ NOT_LOADS = {
     "escaped script in text": "<p>&lt;script src=&quot;https://example.org/x.js&quot;&gt;</p>",
     "comment": "<!-- <script src=https://example.org/x.js> -->",
     "css without a url": "<style>body { margin: 0 }</style>",
+    "inline icon": '<link rel="icon" href="data:image/png;base64,AAAA">',
+    "inline image": '<img src="data:image/svg+xml,%3Csvg%3E%3C/svg%3E" alt="x">',
+    "inline font": "<style>@font-face { font-family: x; src: url(data:font/woff2;base64,AAAA) }</style>",
+    "same-origin css url": "<style>body { background: url(/local.png) }</style>",
+    "same-origin image-set": '<style>body { background: image-set("/a.png" 1x, "/b.png" 2x) }</style>',
+    "a string in css that is not a url": '<style>p::before { content: "see https://example.org" }</style>',
+    "same-origin fill": '<svg><rect fill="url(#g)"></rect></svg>',
+    "harmless srcdoc": '<iframe srcdoc="&lt;p&gt;https://example.org/x&lt;/p&gt;"></iframe>',
+    "host-like text in an attribute that fetches nothing": '<p data-note="//example.org/x and https://[::1]/">x</p>',
+    "ipv6 target as text": "<p>https://[2606:4700:4700::1111]/a and https://@host/</p>",
+    "comment marks inside a url": '<style>body { background: url(/a.png) } /* https://example.org/x */</style>',
 }
 
 
@@ -160,6 +213,8 @@ def test_ordinary_response_headers_are_clean():
     [
         "link: <https://fonts.googleapis.com/css2>; rel=preload; as=style",
         "link: <//cdn.example.com/a.css>; rel=stylesheet",
+        "link: <https://[2606:4700::1]/a.css>; rel=stylesheet",
+        "link: <https://@example.org/a.css>; rel=stylesheet",
         "location: https://example.org/",
         "refresh: 0; url=https://example.org/",
     ],
