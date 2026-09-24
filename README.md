@@ -13,16 +13,24 @@ notices when they stop — see `docs/adr/0007-compose-topology.md`.
 ## What exists today
 
 Creating a link (with a name you choose or one the service invents, optionally given an
-expiry), following it, and deleting it. Every redirect adds one to that link's count for
-the current UTC day, and that per-link per-day number is all the service's tables hold
-about a click (`docs/adr/0004`, `0014`); deleting a link deletes its counts. The stats page and the
-CLI that read the counts are separate pieces of work and are not here yet.
+expiry), following it, deleting it, and a page that lists every link with its counts. Every
+redirect adds one to that link's count for the current UTC day, and that per-link per-day
+number is all the service's tables hold about a click (`docs/adr/0004`, `0014`); deleting a
+link deletes its counts. The CLI is a separate piece of work and is not here yet.
 
 | | |
 |---|---|
 | `POST /-/api/links` | `{"url": …, "name": …?, "created_by": …?, "expires": …?}` → `201 {"name", "url"}`. Needs the team key. |
 | `DELETE /-/api/links/<name>` | `204`. Needs the team key. A deleted name stays reserved forever. |
 | `GET\|HEAD /<name>` | `302` to the long URL with `Cache-Control: no-store`. No credential, no cookie. |
+| `GET /-/stats` | A plain HTML page: every link and its count for each UTC day. Needs the team key over HTTP Basic. |
+
+`/-/stats` is opened in a browser, so it takes HTTP Basic rather than the Bearer header the
+API uses (`docs/adr/0006`): any user name, and the team key as the password. It lists every
+link that has not been deleted, by name, with its target and its day-by-day counts, newest
+day first. A link that has expired is listed and marked, and keeps its counts; a deleted
+link is not listed, because its counts went with it. Opening the page does not count as a
+follow.
 
 Unknown names answer `404`; deleted or expired ones, `410`; and every response the
 application produces carries `Cache-Control: no-store` — a 500 from the framework's own
@@ -84,8 +92,8 @@ so it does not touch a stack you already run. CI runs it on every pull request.
 
 `scripts/no-third-party-check.sh` shows that the stack sends nothing to anyone but the client
 (`docs/adr/0009-third-party-services.md`). It captures every packet the service and the site
-send, from before either one starts, while it creates, follows and deletes a link and loads the
-site. Anything but a reply to its own requests fails the run, and so does any DNS lookup. Each
+send, from before either one starts, while it creates a link, follows it, opens the stats page
+with and without the team key, deletes the link, and loads the site. Anything but a reply to its own requests fails the run, and so does any DNS lookup. Each
 run also plants a connection and a lookup of its own, and a capture that misses them is
 reported blind rather than clean. It also fetches the site's pages and every stylesheet they
 pull in, and fails on any absolute URL, `<script>` or inline event handler in what they serve.
@@ -177,6 +185,7 @@ curl -sf -X POST http://127.0.0.1:8000/-/api/links \
   -d '{"url":"https://example.com/a/very/long/tracking/url","name":"q3-plan"}'
 
 curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' http://127.0.0.1:8000/q3-plan
+curl -sf -u ":$LINKLING_API_KEY" http://127.0.0.1:8000/-/stats | grep q3-plan   # or open it in a browser
 curl -sf -X DELETE http://127.0.0.1:8000/-/api/links/q3-plan \
   -H "Authorization: Bearer $LINKLING_API_KEY"
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/q3-plan   # 410

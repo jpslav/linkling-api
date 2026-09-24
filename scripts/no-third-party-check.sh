@@ -2,8 +2,9 @@
 # Brings up the compose stack and shows that it sends nothing to anyone but the client
 # (ADR-0009, LL-018). Every packet the `api` and `web` containers send is captured, from
 # before each one starts, while the check creates a link, follows it, follows a name that does
-# not exist, deletes the link, follows it again, and loads the public site. A sent packet that
-# is not a reply to the check's own requests fails the run, and so does any DNS query.
+# not exist, opens the stats page with and without the team key, deletes the link, follows it
+# again, and loads the public site. A sent packet that is not a reply to the check's own
+# requests fails the run, and so does any DNS query.
 #
 # A capture that sees nothing looks exactly like a clean one, so every run plants its own
 # positive controls: from inside each captured network namespace, a TCP connection to
@@ -181,9 +182,15 @@ expect "creating the link" 201 "$(curl -s -o "$work/create.body" -w '%{http_code
     "${auth[@]}" -H 'Content-Type: application/json' -d "$body")"
 expect "following the link" "302 $target" "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$base/$canary")"
 expect "following a name that does not exist" 404 "$(curl -s -o /dev/null -w '%{http_code}' "$base/$canary-absent")"
+# HTTP Basic with an empty user name, as R-010's verify line sends it. It runs while the link
+# still exists, so a page that answered 200 without listing the link is blind, not a pass.
+expect "the stats page with the team key" 200 "$(curl -s -o "$work/stats.body" -w '%{http_code}' -u ":$LINKLING_API_KEY" "$base/-/stats")"
+grep -qF "$canary" "$work/stats.body" \
+    || blind "the stats page answered 200 without the link the check made, so it was not exercised"
+expect "the stats page without a credential" 401 "$(curl -s -o /dev/null -w '%{http_code}' "$base/-/stats")"
 expect "deleting the link" 204 "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$base/-/api/links/$canary" "${auth[@]}")"
 expect "following the deleted link" 410 "$(curl -s -o /dev/null -w '%{http_code}' "$base/$canary")"
-echo "api exercised: create, follow, follow of a missing name, delete, follow of the deleted link"
+echo "api exercised: create, follow, follow of a missing name, /-/stats with and without the team key, delete, follow of the deleted link"
 
 findings=()
 
