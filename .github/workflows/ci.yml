@@ -30,7 +30,8 @@ jobs:
 
   # The service sends nothing to anyone but the client (ADR-0009, scripts/no-third-party-check.sh).
   # Only the service: the site needs the private linkling-web checkout, which this workflow's
-  # token cannot fetch (ADR-0015). The second step is the red that makes the first one mean
+  # token cannot fetch (ADR-0015). The job `no-third-party-site` below runs the site half of the
+  # check against a stand-in for it. The second step is the red that makes the first one mean
   # something: a service that fetches each link's target on create must fail, naming the lookup.
   # The third is the same for the stats page's markup: one that names a third-party stylesheet
   # must fail, naming the host.
@@ -78,3 +79,31 @@ jobs:
           status=$?
           echo "$out"
           [ "$status" = 1 ] && grep -q "websockets" <<<"$out"
+
+  # LL-028: the site half of the no-third-party check, run in full (no --api-only) on every
+  # build. The real site is the private linkling-web, which this workflow's token cannot fetch
+  # (ADR-0015), so it runs against a stand-in checked into this repo: tests/fixtures/standin-site,
+  # whose server.py says what it is. That is a proof that the crawl runs, and that it goes red
+  # when it should. It is not a check of the real site: the pages linkling-web serves, its nginx
+  # and the deploy/nginx-privacy.conf mounted into it are not exercised here.
+  # The first step is the check itself and must pass. Each step after it puts one deliberate
+  # defect in the stand-in (scripts/no-third-party-standin.sh) and requires the check to end red
+  # in the way that defect must turn it, judged by its last line as well as its exit status:
+  # an external stylesheet is a `fail`; a stylesheet reply cut short, and one that never ends,
+  # are `blind`. The last one is what exercises the check's time bound, so it has a bound of its
+  # own here: a check that stopped bounding its requests would hang, and a hang is red.
+  no-third-party-site:
+    name: no-third-party-site
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: the whole check passes against the stand-in site
+        run: LINKLING_WEB_DIR=tests/fixtures/standin-site scripts/no-third-party-check.sh
+      - name: the check fails a site that loads an external stylesheet
+        run: scripts/no-third-party-standin.sh external-stylesheet
+      - name: the check is blind, not clean, when a reply is cut short
+        run: scripts/no-third-party-standin.sh cut-short-reply
+      - name: the check is blind, not hung, when a reply never ends
+        timeout-minutes: 5
+        run: scripts/no-third-party-standin.sh stalled-reply

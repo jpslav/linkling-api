@@ -37,9 +37,12 @@
 # deployer puts in front. The README's "Run it with Docker" names the same limits.
 #
 # Usage: scripts/no-third-party-check.sh [--api-only] [--mutate api|api-page|web-net|web-page]
-#   --api-only  check only the service. CI uses it, because CI cannot fetch the private
-#               linkling-web checkout the site is built from (ADR-0015). Without it, a missing
-#               checkout is blind, never a silent skip.
+#   --api-only  check only the service. CI's `no-third-party` job uses it, because CI cannot
+#               fetch the private linkling-web checkout the site is built from (ADR-0015). CI's
+#               `no-third-party-site` job runs the whole check instead, with LINKLING_WEB_DIR
+#               pointed at a stand-in (tests/fixtures/standin-site, LL-028): that shows the
+#               crawl runs and goes red, not that the real site is clean. Without --api-only, a
+#               missing checkout is blind, never a silent skip.
 #   --mutate    layer in a deliberate leak from scripts/no-third-party/mutations/, to show the
 #               check going red. Each must fail and name what it saw.
 #
@@ -50,7 +53,9 @@
 #   LINKLING_NO3P_MAX_TIME  seconds one whole request may take, curl's --max-time (default 10):
 #                           a service or site that accepts a connection and never answers is
 #                           `blind` after this long, not a hang
-#   LINKLING_WEB_DIR        the linkling-web checkout (default ../linkling-web, as compose.yaml)
+#   LINKLING_WEB_DIR        the linkling-web checkout (default ../linkling-web, as compose.yaml);
+#                           any directory with a Dockerfile for a container that serves the site
+#                           on port 80 will do, which is how CI runs the stand-in
 # Each run gets a fresh .smoke-data/no3p-run-<random>/, holding the service's database and the
 # captures as tcpdump prints them. It is left behind, as compose-smoke.sh leaves its own: on
 # Linux the database directory ends up owned by the service's uid, 10001, which the entrypoint

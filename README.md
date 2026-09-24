@@ -112,7 +112,13 @@ It cannot see routes it does not exercise, anything after the run ends, what a b
 with the pages, what the host does outside the containers, or a proxy you put in front. CI
 runs it with `--api-only`, because CI cannot fetch `linkling-web`, and runs it again with a
 deliberate leak to show that it goes red, and again with a stats page that names a third-party
-stylesheet. Run it with the site from a checkout that has `linkling-web` beside it.
+stylesheet. A second CI job runs the whole check, site included, against a small stand-in for the
+site (`tests/fixtures/standin-site`, named with `LINKLING_WEB_DIR`), and then against three copies of
+it that each carry one defect the check must catch (`scripts/no-third-party-standin.sh`): a
+stylesheet on another origin (`fail`), and a stylesheet reply that stops short or never ends
+(`blind`). That shows the crawl runs, stops on its time bound and goes red. It says nothing about
+what `linkling-web` serves, and the stand-in is not nginx, so `deploy/nginx-privacy.conf` is not
+exercised either. Run it with the real site from a checkout that has `linkling-web` beside it.
 
 ### Where the database lives
 
