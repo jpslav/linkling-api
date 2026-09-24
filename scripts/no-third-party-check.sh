@@ -171,8 +171,13 @@ fi
 # --- exercise -------------------------------------------------------------------------------
 
 expect() { # <what> <wanted> <got>
-    [ "$3" = "$2" ] || { cat "$work/create.body" >&2 2>/dev/null || true; echo >&2
-        blind "$1 answered '$3', not '$2', so the run did not exercise what it claims"; }
+    # Of the steps judged here, only the create step keeps its response body, in
+    # $work/create.body. It is shown only if a step fails while the file is still there and not
+    # empty, and the first step to pass deletes it, so a later step's failure never prints it as
+    # if it were its own answer: what a later step got is the '$3' below (LL-023).
+    if [ "$3" = "$2" ]; then rm -f "$work/create.body"; return 0; fi
+    if [ -s "$work/create.body" ]; then cat "$work/create.body" >&2; echo >&2; fi
+    blind "$1 answered '$3', not '$2', so the run did not exercise what it claims"
 }
 auth=(-H "Authorization: Bearer $LINKLING_API_KEY")
 
