@@ -82,10 +82,11 @@ start() {
 
 # Asks the service one question and leaves what curl's -w format printed in $answer:
 # ask <step> <-w format> <curl args...>. A stack that stops answering mid-run is `blind`, said
-# here with the reason curl gave, not curl's own exit status ending the run under `set -e`
-# (LL-023). The printed status is what is trusted (curl prints 000 when nothing answered), and
-# the exit status only names the reason: a status curl did print survives a non-zero exit, so
-# it is read in an `if`, where `|| answer=000` would have overwritten it.
+# here with curl's reason, not curl's own exit status ending the run under `set -e` (LL-023).
+# What curl printed decides it: curl prints 000 when no HTTP status came back. The exit status
+# only names the reason, and nothing overwrites $answer when it is non-zero, because a status
+# curl did print survives a non-zero exit (a body cut short, say) and `|| answer=000` would
+# have discarded it.
 ask() {
     local step="$1" fmt="$2" rc why
     shift 2

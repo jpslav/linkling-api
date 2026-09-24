@@ -170,9 +170,10 @@ fi
 # --- exercise -------------------------------------------------------------------------------
 
 expect() { # <what> <wanted> <got>
-    # Only the create step keeps its response body, in $work/create.body. It is that step's to
-    # show when it fails, and gone once it has passed, so that a later step's failure never
-    # prints it as if it were its own answer: what a later step got is the '$3' below (LL-023).
+    # Of the steps judged here, only the create step keeps its response body, in
+    # $work/create.body. It is shown only if a step fails while the file is still there and not
+    # empty, and the first step to pass deletes it, so a later step's failure never prints it as
+    # if it were its own answer: what a later step got is the '$3' below (LL-023).
     if [ "$3" = "$2" ]; then rm -f "$work/create.body"; return 0; fi
     if [ -s "$work/create.body" ]; then cat "$work/create.body" >&2; echo >&2; fi
     blind "$1 answered '$3', not '$2', so the run did not exercise what it claims"
