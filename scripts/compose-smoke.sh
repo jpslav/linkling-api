@@ -80,10 +80,31 @@ start() {
     fi
 }
 
-# Follows the canary once and prints "<status> <Location>".
-follow() {
-    curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$base/$canary"
+# Asks the service one question and leaves what curl's -w format printed in $answer:
+# ask <step> <-w format> <curl args...>. A stack that stops answering mid-run is `blind`, said
+# here with the reason curl gave, not curl's own exit status ending the run under `set -e`
+# (LL-023). The printed status is what is trusted (curl prints 000 when nothing answered), and
+# the exit status only names the reason: a status curl did print survives a non-zero exit, so
+# it is read in an `if`, where `|| answer=000` would have overwritten it.
+ask() {
+    local step="$1" fmt="$2" rc why
+    shift 2
+    if answer="$(curl -s -o /dev/null -w "$fmt" "$@")"; then rc=0; else rc=$?; fi
+    case "$answer" in
+        ""|000*)
+            case "$rc" in
+                7) why="curl could not connect" ;;
+                28) why="curl timed out" ;;
+                52) why="the connection closed with no reply" ;;
+                56) why="receiving the reply failed" ;;
+                *) why="curl exit status $rc" ;;
+            esac
+            blind "no answer from $base while $step ($why), so the run went no further" ;;
+    esac
 }
+
+# Follows the canary once and leaves "<status> <Location>" in $answer.
+follow() { ask "following the canary $1" '%{http_code} %{redirect_url}' "$base/$canary"; }
 
 # The service's logs must show that it started (so an empty log cannot pass as a clean one),
 # and must not mention the canary's path or any IPv4 address except the 0.0.0.0 it binds.
@@ -104,12 +125,14 @@ mkdir -p "$(dirname "$data")"
 
 start "first start"
 
-status="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/-/api/links" \
+ask "creating the canary link" '%{http_code}' -X POST "$base/-/api/links" \
     -H "Authorization: Bearer $LINKLING_API_KEY" -H 'Content-Type: application/json' \
-    -d "{\"url\": \"$target\", \"name\": \"$canary\"}")"
+    -d "{\"url\": \"$target\", \"name\": \"$canary\"}"
+status="$answer"
 [ "$status" = 201 ] || fail "creating the canary link answered $status, not 201"
 
-got="$(follow)"
+follow "before the restart"
+got="$answer"
 [ "$got" = "302 $target" ] || fail "the first follow gave '$got', not '302 $target'"
 echo "follow before restart: $got"
 
@@ -131,7 +154,8 @@ check_logs "before restart"
 dc down >/dev/null 2>&1 || fail "docker compose down failed"
 start "after down and up"
 
-got="$(follow)"
+follow "after down and up"
+got="$answer"
 [ "$got" = "302 $target" ] || fail "after down and up the follow gave '$got', not '302 $target'"
 echo "follow after restart:  $got"
 
