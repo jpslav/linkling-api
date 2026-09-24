@@ -229,6 +229,16 @@ def test_the_user_name_is_ignored_and_the_password_is_everything_after_the_first
         assert colon_client.get("/-/stats", headers=_basic("", "a")).status_code == 401
 
 
+def test_the_bearer_check_still_ignores_padding_around_the_key(client, config, target):
+    """The comparison moved into a helper Basic now shares; Bearer must keep its `.strip()`."""
+    padded = client.post(
+        "/-/api/links",
+        json={"url": target, "name": "padded"},
+        headers={"Authorization": f"Bearer  {config.api_key} "},
+    )
+    assert padded.status_code == 201, padded.text
+
+
 def test_over_a_real_socket_the_verify_line_of_r010_passes_and_the_blind_cases_fail(
     live_base_url, config, auth
 ):
@@ -268,9 +278,15 @@ def test_viewing_the_page_leaves_every_daily_count_row_unchanged(
     # Move the clock to a day nobody has followed on, so a page that counted anything
     # would either add a row or raise one.
     monkeypatch.setattr(counts, "_epoch_seconds", lambda: DAY_THREE)
-    for headers in (stats_auth, stats_auth, {}, auth, _basic("", "wrong")):
-        client.get("/-/stats", headers=headers)
-    client.get("/-/stats?refresh=1", headers=stats_auth)
+    for headers, expected in (
+        (stats_auth, 200),
+        (stats_auth, 200),
+        ({}, 401),
+        (auth, 401),
+        (_basic("", "wrong"), 401),
+    ):
+        assert client.get("/-/stats", headers=headers).status_code == expected
+    assert client.get("/-/stats?refresh=1", headers=stats_auth).status_code == 200
     client.head("/-/stats", headers=stats_auth)
     client.post("/-/stats", headers=stats_auth)
 
