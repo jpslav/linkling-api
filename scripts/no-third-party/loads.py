@@ -49,10 +49,13 @@ _EXTERNAL = re.compile(r"""(?:^|[\x00-\x20,;=('"<])""" + _URL_START, re.IGNORECA
 # What a URL parser drops from anywhere in its input, before it looks at the scheme.
 _DROPPED = re.compile(r"[\t\n\r]")
 
-# A `javascript:` URL, and a `data:` URL that is not an image: a document given by value, which
-# can hold anything, so nothing about the origin of what it loads can be read off the markup.
+# A `javascript:` URL, and a `data:` URL whose media type is a document, a stylesheet or a script:
+# something given by value that can hold anything, so nothing about the origin of what it loads
+# can be read off the markup. Not one with no media type (`data:,` and `data:;base64,...` are
+# `text/plain`, which is what an icon written to stop a favicon request looks like), nor `text/plain`
+# itself, nor an image, which cannot load anything.
 _JAVASCRIPT_URL = re.compile(r"^[\x00-\x20]*javascript:", re.IGNORECASE)
-_DATA_DOCUMENT = re.compile(r"^[\x00-\x20]*data:(?!\s*image/)", re.IGNORECASE)
+_DATA_DOCUMENT = re.compile(r"^[\x00-\x20]*data:(?![,;]|\s*image/|\s*text/plain)", re.IGNORECASE)
 
 # CSS naming an image or stylesheet from another origin: `url(` followed by one, and a quoted
 # string that starts with one (`@import "..."`, and every candidate of `image-set()` after the
@@ -78,6 +81,16 @@ _URL_ATTRS = frozenset(
 
 # Attributes that hold a URL a script may be run from, though nothing is fetched from it.
 _ACTIONS = frozenset({"action", "formaction"})
+
+# Attributes whose value is CSS, so a `url()` in one is a load: SVG's presentation attributes and
+# `cursor`. Text attributes (alt, title, aria-label, data-*) can say `url(` as text and are not
+# read as CSS.
+_URL_FUNCTION_ATTRS = frozenset(
+    {
+        "fill", "stroke", "filter", "mask", "clip-path", "marker-start", "marker-mid", "marker-end",
+        "cursor",
+    }
+)  # fmt: skip
 
 # Tags whose URLs are followed by the reader, not by the page.
 _NAVIGATION = frozenset({"a", "area", "form"})
@@ -117,7 +130,7 @@ def _attribute_load(tag: str, name: str, value: str, refresh: bool) -> str | Non
     if name == "style":
         if _CSS_LOAD.search(css) or _CSS_IMPORT_DATA.search(css):
             return "loads from another origin"
-    elif _CSS_URL_FN.search(css):
+    elif name in _URL_FUNCTION_ATTRS and _CSS_URL_FN.search(css):
         return "loads from another origin"
     if tag in _NAVIGATION:
         return None

@@ -129,6 +129,11 @@ LOADS = {
     "javascript url in a form action": '<form action="javascript:fetch(1)"></form>',
     "svg fill from another origin": '<svg><rect fill="url(https://evil.example/x.svg#g)"></rect></svg>',
     "svg filter from another origin": "<svg><rect filter=\"url('//evil.example/x.svg#f')\"></rect></svg>",
+    "svg stroke from another origin": '<svg><path stroke="url(https://evil.example/x.svg#g)"></path></svg>',
+    "svg mask from another origin": '<svg><rect mask="url(https://evil.example/x.svg#m)"></rect></svg>',
+    "svg clip-path from another origin": '<svg><rect clip-path="url(https://evil.example/x.svg#c)"></rect></svg>',
+    "svg marker from another origin": '<svg><path marker-end="url(https://evil.example/x.svg#e)"></path></svg>',
+    "cursor from another origin": '<svg><rect cursor="url(https://evil.example/x.cur), auto"></rect></svg>',
     "data document in an iframe": '<iframe src="data:text/html;base64,PHNjcmlwdD4="></iframe>',
     "data stylesheet in a link": '<link rel="stylesheet" href="data:text/css;base64,QGltcG9ydA==">',
     "data object": '<object data="data:application/x-shockwave-flash;base64,AAAA"></object>',
@@ -172,6 +177,14 @@ NOT_LOADS = {
     "host-like text in an attribute that fetches nothing": '<p data-note="//example.org/x and https://[::1]/">x</p>',
     "ipv6 target as text": "<p>https://[2606:4700:4700::1111]/a and https://@host/</p>",
     "comment marks inside a url": '<style>body { background: url(/a.png) } /* https://example.org/x */</style>',
+    # Round 2: a data: URL that is not a document, and text in an attribute that holds no CSS.
+    "empty data url on an icon": '<link rel="icon" href="data:,">',
+    "data url with no media type": '<link rel="icon" href="data:;base64,AAAA">',
+    "plain text data url": '<iframe src="data:text/plain,hello"></iframe>',
+    "url( in a title": '<a title="see url(https://x.test/a)" href="/x">x</a>',
+    "url( in an alt": '<img src="/a.png" alt="see url(//x.test/a)">',
+    "url( in an aria-label": '<p aria-label="url(https://x.test/a)">x</p>',
+    "url( in a data attribute": '<p data-note="url(\'https://x.test/a\')">x</p>',
 }
 
 
