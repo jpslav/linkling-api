@@ -1,4 +1,4 @@
-"""The FastAPI application: create, follow and delete.
+"""The FastAPI application: create, follow, delete and the stats page.
 
 The route space is ADR-0001's: link names live at the root, everything the service serves
 itself lives under ``/-/``, and a custom name may not begin with ``-`` -- which is what
@@ -34,6 +34,7 @@ RFC 9110's heuristically cacheable set; it is not a guarantee this module makes.
 
 from __future__ import annotations
 
+import base64
 import hmac
 import sqlite3
 from collections.abc import Iterator
@@ -43,10 +44,11 @@ from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict
 from starlette.datastructures import MutableHeaders
 
-from . import counts, db, links, names
+from . import counts, db, links, names, stats
 from .config import Config, load_config
 
 #: ADR-0003: the status a live link answers with.
@@ -154,6 +156,19 @@ def _content_length(scope) -> int | None:
             except ValueError:
                 return None
     return None
+
+
+def _is_team_key(request: Request, candidate: bytes) -> bool:
+    """Whether ``candidate`` is the team key, whichever scheme it arrived in.
+
+    Compared as bytes: `hmac.compare_digest` on `str` raises TypeError for any non-ASCII
+    character, and Starlette decodes header bytes as latin-1 -- so a token carrying one
+    byte >= 0x80 turned an unauthenticated 401 into a 500. ``compare_digest`` does not
+    return early on the first differing byte, so the *content* of a wrong key cannot be
+    found one byte at a time; it does not hide the key's length, and nothing here claims
+    to.
+    """
+    return hmac.compare_digest(candidate, request.app.state.config.api_key.encode("utf-8"))
 
 
 async def _too_large(send, limit: int) -> None:
@@ -264,8 +279,9 @@ def _validate_created_by(raw: str | None) -> str | None:
     if len(raw) > _MAX_CREATED_BY:
         raise HTTPException(422, f"created_by must be at most {_MAX_CREATED_BY} characters.")
     if any(character < " " or character == "\x7f" for character in raw):
-        # Nothing renders this yet; the stats page (LL-016) and the CLI (LL-003) will,
-        # and a stored `\r\n` is theirs to discover. Refusing it now is additive-safe.
+        # The stats page (LL-016) renders this, escaped, and the CLI (LL-003) will; a
+        # stored `\r\n` is a surprise for each of them to discover. Refusing it up front
+        # is additive-safe.
         raise HTTPException(422, "created_by must not contain control characters.")
     return raw
 
@@ -323,13 +339,9 @@ def create_app(config: Config | None = None) -> FastAPI:
         request: Request,
         authorization: Annotated[str | None, Header()] = None,
     ) -> None:
-        """ADR-0006a: one team key, ``Authorization: Bearer <key>``.
-
-        Compared with ``hmac.compare_digest``, which does not return early on the first
-        differing byte -- so the *content* of a wrong key cannot be found one byte at a
-        time. It does not hide the key's length, and nothing here claims to. Following a
-        link does not depend on this and never will: R-011 and R-012 are only meaningful
-        together.
+        """ADR-0006a: one team key, ``Authorization: Bearer <key>``, compared by
+        ``_is_team_key``. Following a link does not depend on this and never will: R-011
+        and R-012 are only meaningful together.
         """
         unauthorised = HTTPException(
             401,
@@ -341,13 +353,38 @@ def create_app(config: Config | None = None) -> FastAPI:
         scheme, _, token = authorization.partition(" ")
         if scheme.lower() != "bearer":
             raise unauthorised
-        expected = request.app.state.config.api_key
-        # Compared as bytes: `hmac.compare_digest` on `str` raises TypeError for any
-        # non-ASCII character, and Starlette decodes header bytes as latin-1 -- so a
-        # token carrying one byte >= 0x80 turned an unauthenticated 401 into a 500.
-        if not hmac.compare_digest(
-            token.strip().encode("utf-8"), expected.encode("utf-8")
-        ):
+        if not _is_team_key(request, token.strip().encode("utf-8")):
+            raise unauthorised
+
+    def require_basic_key(
+        request: Request,
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> None:
+        """ADR-0006b: the stats page's gate. HTTP Basic, the team key as the *password*.
+
+        Basic rather than Bearer because a person opens this page in a browser, and Basic
+        is browser-native, needs no session code and works with ``curl -u ":$KEY"``
+        (ADR-0006b). The user name is ignored, since there is one key and no accounts, and
+        the password is everything after the first colon (RFC 7617 section 2: only the
+        user-id is barred from containing one), so a key with a colon in it still works.
+        Compared by the same ``_is_team_key`` as Bearer.
+        """
+        unauthorised = HTTPException(
+            401,
+            "This page needs the team API key as the password.",
+            headers={"WWW-Authenticate": 'Basic realm="Linkling", charset="UTF-8"'},
+        )
+        if not authorization:
+            raise unauthorised
+        scheme, _, credentials = authorization.partition(" ")
+        if scheme.lower() != "basic":
+            raise unauthorised
+        try:
+            decoded = base64.b64decode(credentials.strip(), validate=True)
+        except ValueError:
+            raise unauthorised from None
+        _, colon, password = decoded.partition(b":")
+        if not colon or not _is_team_key(request, password):
             raise unauthorised
 
     # NOTE: the connection is taken as `= Depends(get_conn)` rather than through an
@@ -424,6 +461,14 @@ def create_app(config: Config | None = None) -> FastAPI:
                 GONE_STATUS, "That link was already deleted. Its name stays reserved."
             ) from exc
         return Response(status_code=204)
+
+    @app.get("/-/stats", dependencies=[Depends(require_basic_key)])
+    def stats_page(conn: sqlite3.Connection = Depends(get_conn)) -> HTMLResponse:
+        """R-010: every link with its count for each day, plain HTML, behind the key.
+
+        Never calls into ``counts``: opening the page must not count as a follow.
+        """
+        return HTMLResponse(stats.render(stats.collect(conn)))
 
     @app.api_route("/{name}", methods=["GET", "HEAD"])
     @app.api_route("/{name}/", methods=["GET", "HEAD"])
