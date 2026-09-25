@@ -1,0 +1,5 @@
+# The input Dependabot re-resolves requirements.lock.txt from (LL-024, ADR-0018). It says what
+# pyproject.toml's [project] dependencies say, and tests/test_ll024_pins_refresh.py fails if the
+# two differ. To re-lock by hand instead, the command in requirements.lock.txt's header still works.
+fastapi>=0.115
+uvicorn>=0.30

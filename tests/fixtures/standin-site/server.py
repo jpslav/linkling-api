@@ -19,6 +19,12 @@ red on it, in the way named here:
                        STALL_SECONDS pass. The check must be `blind` in its own time bound (curl's
                        --max-time, 5 s in CI), long before that. A check that had lost the bound
                        would end STALL_SECONDS later on a different message, which is red as well.
+  never-listens        the container runs and binds nothing (LL-029). It is not a defect in what the
+                       site serves but in whether it is up: compose.yaml's `web` healthcheck must
+                       keep `docker compose up --wait` from returning, so the check must be `blind`,
+                       "the stack never came up healthy", and its output must say `unhealthy`.
+                       Without the healthcheck, `--wait` returned as soon as the container was
+                       running, and the crawl then found nothing to talk to.
 
 The server resolves no name and opens no connection of its own: the check captures every packet
 this container sends, and any DNS query fails it. `http.server` would look up its own host name
@@ -31,8 +37,14 @@ import http.server
 import pathlib
 import socketserver
 import sys
+import threading
 
-MODES = ("none", "external-stylesheet", "cut-short-reply", "stalled-reply")
+MODES = ("none", "external-stylesheet", "cut-short-reply", "stalled-reply", "never-listens")
+
+
+def listens(mode: str) -> bool:
+    """Whether the server binds its port at all: every mode but `never-listens`."""
+    return mode != "never-listens"
 
 # A host that cannot resolve (RFC 2606), so that the link never reaches anybody even if a browser
 # followed it. The check reads the markup and fetches nothing from it.
@@ -115,4 +127,8 @@ def make_server(mode: str, address: tuple[str, int]) -> Server:
 
 if __name__ == "__main__":
     mode = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "/mode").read_text().strip()
+    handler_for(mode)  # an unknown mode is refused here too, never served as a clean site
+    if not listens(mode):
+        # Running, and never ready: the process stays up and no port is ever bound.
+        threading.Event().wait()
     make_server(mode, ("0.0.0.0", 80)).serve_forever()

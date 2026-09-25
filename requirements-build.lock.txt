@@ -2,9 +2,10 @@
 # is not covered by requirements.lock.txt or --require-hashes on it -- pip's PEP-517 build
 # isolation fetches the build backend itself, unhashed, into a temp env unless it is already
 # installed and --no-build-isolation is passed (Dockerfile). Locked here so that fetch is
-# hash-verified too, matching pip's expected constraint syntax (`echo "name>=X" | uv pip
-# compile - ...`, not a real file, since there is nothing else to point it at):
-#    echo "setuptools>=68" | uv pip compile - --generate-hashes -o requirements-build.lock.txt
+# hash-verified too. It was first compiled from stdin, since there was no file to point at; the
+# input is now requirements-build.lock.in, which is also what Dependabot re-resolves it from
+# (LL-024, ADR-0018), so a re-lock by hand is:
+#    uv pip compile requirements-build.lock.in --generate-hashes -o requirements-build.lock.txt
 setuptools==84.0.0 \
     --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670 \
     --hash=sha256:f4695c21257f0d9b537ec2692c941d02ee143b7cc1276941349a546573b2ef73

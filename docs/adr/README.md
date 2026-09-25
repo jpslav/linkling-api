@@ -17,4 +17,5 @@
 | [0014](0014-daily-counts-table-shape.md) | daily_counts is a WITHOUT ROWID table keyed by (link, UTC day), its counts die with their link by trigger, and a follow is counted by one guarded upsert | Proposed |
 | [0015](0015-compose-assembly.md) | How the compose file is assembled: the site's source, the service's user, logging, and origins | Proposed |
 | [0017](0017-loopback-bind-and-locked-image.md) | Loopback bind by default, and a locked, digest-pinned image | Proposed |
+| [0018](0018-dependabot-refreshes-the-locks-and-digests.md) | Dependabot refreshes the locks and base-image digests, with .in files as the lock inputs | Proposed |
 <!-- adr-index:end -->
