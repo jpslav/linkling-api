@@ -147,13 +147,8 @@ jobs:
       - name: the stack is not ready while the site never listens
         timeout-minutes: 5
         run: scripts/no-third-party-standin.sh never-listens
-      - name: THROWAWAY (LL-034 red) a copy of the real site with an external stylesheet added
-        run: |
-          cp -R linkling-web linkling-web-red
-          sed -i 's#</head>#<link rel="stylesheet" href="https://styles.example.invalid/red.css"></head>#' linkling-web-red/site/index.html
-          grep -n "styles.example.invalid" linkling-web-red/site/index.html
       - name: the whole check passes against the real site
-        run: LINKLING_WEB_DIR=linkling-web-red scripts/no-third-party-check.sh
+        run: LINKLING_WEB_DIR=linkling-web scripts/no-third-party-check.sh
       - name: the check is blind, not clean, when the site checkout is empty or absent
         run: |
           set +e
