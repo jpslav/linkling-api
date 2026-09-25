@@ -1,0 +1,86 @@
+{
+  "format": 1,
+  "tables": {
+    "daily_counts": {
+      "purpose": "How many times each link was followed on each UTC day. This table is the only place the service records anything about a click.",
+      "columns": {
+        "link_id": {
+          "purpose": "Which link the count belongs to.",
+          "retention": "Kept while the link exists, including after it expires. Removed with the rest of the row when the link is deleted.",
+          "on_delete": "removed",
+          "on_expiry": "kept"
+        },
+        "day": {
+          "purpose": "The UTC calendar date the follows happened on, as YYYY-MM-DD.",
+          "retention": "Kept while the link exists, including after it expires. Removed with the rest of the row when the link is deleted.",
+          "on_delete": "removed",
+          "on_expiry": "kept"
+        },
+        "count": {
+          "purpose": "How many times the link was followed that day. A row exists only for a day on which it was followed at least once.",
+          "retention": "Kept while the link exists, including after it expires. Removed with the rest of the row when the link is deleted.",
+          "on_delete": "removed",
+          "on_expiry": "kept"
+        }
+      }
+    },
+    "links": {
+      "purpose": "Every short link a team member has made, including deleted ones, whose names stay reserved.",
+      "columns": {
+        "id": {
+          "purpose": "An internal number that ties a link to its daily counts.",
+          "retention": "Kept for as long as the database exists, including after the link expires or is deleted.",
+          "on_delete": "kept",
+          "on_expiry": "kept"
+        },
+        "name": {
+          "purpose": "The short name the link is followed by.",
+          "retention": "Kept for as long as the database exists, including after the link expires or is deleted, so the name is never reused.",
+          "on_delete": "kept",
+          "on_expiry": "kept"
+        },
+        "target": {
+          "purpose": "The long URL the short link redirects to.",
+          "retention": "Kept while the link exists, including after it expires. Replaced with an empty string when the link is deleted.",
+          "on_delete": "emptied",
+          "on_expiry": "kept"
+        },
+        "created_at": {
+          "purpose": "When the link was made, in UTC, to the second.",
+          "retention": "Kept for as long as the database exists, including after the link expires or is deleted.",
+          "on_delete": "kept",
+          "on_expiry": "kept"
+        },
+        "expires_at": {
+          "purpose": "When the link stops redirecting, in UTC, if whoever made it set an expiry. No value is stored for a link that never expires.",
+          "retention": "Kept for as long as the database exists, including after the link expires or is deleted.",
+          "on_delete": "kept",
+          "on_expiry": "kept"
+        },
+        "deleted_at": {
+          "purpose": "When the link was deleted, in UTC, to the second. No value is stored for a link that has not been deleted.",
+          "retention": "Written when the link is deleted, and kept from then on for as long as the database exists.",
+          "on_delete": "set",
+          "on_expiry": "kept"
+        },
+        "created_by": {
+          "purpose": "An optional free-text label sent by whoever made the link, such as their name. The service does not check that it is true.",
+          "retention": "Kept while the link exists, including after it expires. Erased when the link is deleted.",
+          "on_delete": "nulled",
+          "on_expiry": "kept"
+        }
+      }
+    },
+    "schema_version": {
+      "purpose": "Which database migrations have been applied. It holds nothing about links or about the people who follow them.",
+      "columns": {
+        "version": {
+          "purpose": "The number of one applied migration.",
+          "retention": "Kept for as long as the database exists. Deleting or expiring a link does not touch it.",
+          "on_delete": "kept",
+          "on_expiry": "kept"
+        }
+      }
+    }
+  }
+}
