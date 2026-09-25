@@ -57,6 +57,10 @@
 #                           any directory whose Dockerfile builds a container that serves `/`,
 #                           `/privacy.html` and their stylesheets on port 80 will do, which is how
 #                           CI runs the stand-in
+#   LINKLING_NO3P_FIXTURE   the name of the deliberate defect the site was built with, set by the
+#                           wrapper that put one there (scripts/no-third-party-standin.sh). It is
+#                           only printed, in the banner, so a log of a red run says which defect it
+#                           was for; the check judges what it sees, not what it is told (default none)
 # Each run gets a fresh .smoke-data/no3p-run-<random>/, holding the service's database and the
 # captures as tcpdump prints them. It is left behind, as compose-smoke.sh leaves its own: on
 # Linux the database directory ends up owned by the service's uid, 10001, which the entrypoint
@@ -190,7 +194,11 @@ export COMPOSE_PROJECT_NAME="$project"
 # compose.observe.yaml reads this, and compose would otherwise take it from a .env file.
 export LINKLING_NO3P_CAPTURE_FILTER="${LINKLING_NO3P_CAPTURE_FILTER:-}"
 
-echo "project $project, api on $base$([ "$api_only" = 1 ] || echo ", site on $site"), mutation ${mutate:-none}"
+# `compose mutation` is --mutate's overlay and nothing else. It used to be the banner's only word on
+# the subject, and it read `mutation none` on a run whose site had a defect built into it. The site
+# fixture is named separately, from the wrapper that put the defect there (LL-029).
+site_fixture="${LINKLING_NO3P_FIXTURE:-none}"
+echo "project $project, api on $base$([ "$api_only" = 1 ] || echo ", site on $site (built from $web_dir), site fixture $site_fixture"), compose mutation ${mutate:-none}"
 mkdir -p "$captures"
 echo "captures will be kept in $captures"
 

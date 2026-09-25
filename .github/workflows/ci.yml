@@ -90,10 +90,13 @@ jobs:
   # defect in the stand-in (scripts/no-third-party-standin.sh) and requires the check to end red
   # in the way that defect must turn it, judged by its last line as well as its exit status:
   # an external stylesheet is a `fail`; a stylesheet reply cut short, and one that never ends,
-  # are `blind`. The last one is what exercises the check's time bound: a check that had lost it
-  # would wait for the stand-in's own backstop (STALL_SECONDS in its server.py) and end on a
-  # different message, which the script counts as red. The step has a bound of its own too, in
-  # case the wait ever stopped ending.
+  # are `blind`. The stalled reply is what exercises the check's time bound: a check that had lost
+  # it would wait for the stand-in's own backstop (STALL_SECONDS in its server.py) and end on a
+  # different message, which the script counts as red. The last is a site that never listens
+  # (LL-029): `blind`, with a line saying the `web` container is unhealthy, because compose.yaml's
+  # `web` healthcheck must keep `docker compose up --wait` from returning. The script also
+  # requires the check's banner to name the fixture. The steps that can wait have a bound of their own too, in case
+  # the wait ever stopped ending.
   no-third-party-site:
     name: no-third-party-site
     runs-on: ubuntu-latest
@@ -109,3 +112,6 @@ jobs:
       - name: the check is blind, not hung, when a reply never ends
         timeout-minutes: 5
         run: scripts/no-third-party-standin.sh stalled-reply
+      - name: the stack is not ready while the site never listens
+        timeout-minutes: 5
+        run: scripts/no-third-party-standin.sh never-listens

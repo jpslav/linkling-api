@@ -1,21 +1,24 @@
 """LL-028 -- the site half of the no-third-party check runs in CI against a stand-in site.
 
 CI's job `no-third-party-site` runs the whole check against tests/fixtures/standin-site, and then
-scripts/no-third-party-standin.sh three times, each with a deliberate defect in the stand-in that
+scripts/no-third-party-standin.sh four times, each with a deliberate fault in the stand-in that
 the check must catch. All of that needs Docker. What does not is pinned here, in the fast job:
 
 - the stand-in serves what each of its modes says it does, so a fixture cannot go red, or stay
   green, for a reason other than the one it names (the cut-short reply really is cut short, the
-  stalled one really is held open), and the server resolves no name (the check fails any DNS
-  query it captures);
+  stalled one really is held open, the `never-listens` one really binds nothing, and a mode that
+  serves is caught binding by the same harness), and the server resolves no name (the check fails
+  any DNS query it captures);
 - the stand-in's base image is pinned by the same digest as the service's (ADR-0017);
-- every defect mode of the stand-in (all but `none`, the clean site, which is the job's first
+- every fault mode of the stand-in (all but `none`, the clean site, which is the job's first
   step) has a fixture in the script and a step in ci.yml, and the site job runs the check without
   --api-only. Each comparison is between sets read out of a file, and an empty read must not look
   like agreement, so each one is asserted against the set it must be;
 - the script judges the check's exit status AND its last line, on a stand-in check that ends as
   told: it passes when the check ends the way the fixture requires, and not when the check says
-  `pass`, ends red in another way, or is blind for a reason that is not the fixture's.
+  `pass`, ends red in another way, or is blind for a reason that is not the fixture's. For
+  `never-listens` it also wants a line saying the `web` container is unhealthy, and for every
+  fixture a banner that names it.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -39,8 +43,10 @@ STANDIN = ROOT / "tests" / "fixtures" / "standin-site"
 SCRIPT = ROOT / "scripts" / "no-third-party-standin.sh"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 
-MUTATIONS = {"external-stylesheet", "cut-short-reply", "stalled-reply"}
+MUTATIONS = {"external-stylesheet", "cut-short-reply", "stalled-reply", "never-listens"}
 MODES = MUTATIONS | {"none"}
+# Every mode but `never-listens` serves pages; that one binds nothing, so there is nothing to ask.
+SERVED_MODES = MODES - {"never-listens"}
 
 
 def _load_server():
@@ -100,7 +106,7 @@ def test_the_clean_stand_in_serves_what_the_crawl_needs():
             assert b"://" not in page and b'"//' not in page
 
 
-@pytest.mark.parametrize("mode", sorted(MODES))
+@pytest.mark.parametrize("mode", sorted(SERVED_MODES))
 def test_only_the_external_stylesheet_mode_links_another_origin(mode):
     with serving(mode) as port:
         _, _, home = _body(port, "/")
@@ -168,6 +174,57 @@ def test_the_checked_in_mode_is_the_clean_one():
     assert (STANDIN / "mode").read_text().strip() == "none"
 
 
+# --- the site that never listens (LL-029) --------------------------------------------------------
+
+# Runs server.py's own `__main__` with binding made an error, so that a mode that binds is caught by
+# the process ending, and one that does not is caught by the process still running.
+BIND_IS_AN_ERROR = """
+import runpy, socketserver, sys
+def refuse(self):
+    raise SystemExit("bound a port")
+socketserver.TCPServer.server_bind = refuse
+server, mode_file = sys.argv[1], sys.argv[2]
+sys.argv = [server, mode_file]
+runpy.run_path(server, run_name="__main__")
+"""
+
+
+def _run_main(tmp_path: Path, mode: str) -> tuple[bool, str]:
+    """(still running after a moment, what it printed). Its `main` is the real one."""
+    mode_file = tmp_path / f"mode-{mode}"
+    mode_file.write_text(mode + "\n")
+    proc = subprocess.Popen(
+        [sys.executable, "-c", BIND_IS_AN_ERROR, str(STANDIN / "server.py"), str(mode_file)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        out, _ = proc.communicate(timeout=1.5)
+        return False, out
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        return True, ""
+
+
+def test_the_never_listens_mode_runs_and_binds_nothing(tmp_path):
+    running, out = _run_main(tmp_path, "never-listens")
+    assert running, f"it ended instead of staying up: {out!r}"
+
+
+def test_a_serving_mode_is_caught_binding_by_the_same_harness(tmp_path):
+    # The control: with the harness the same, a mode that serves must end with the refusal, so the
+    # test above cannot be passing because the harness never reaches the bind.
+    running, out = _run_main(tmp_path, "none")
+    assert not running and "bound a port" in out, out
+
+
+def test_an_unknown_mode_is_refused_by_main_too_not_run_as_a_site_that_never_listens(tmp_path):
+    running, out = _run_main(tmp_path, "never-listenss")
+    assert not running and "unknown mode" in out, out
+
+
 # --- the pin, and the coverage ------------------------------------------------------------------
 
 DIGEST = re.compile(r"^FROM python:3\.12-slim@(sha256:[0-9a-f]{64})[ \t]*$", re.M)
@@ -183,7 +240,7 @@ def test_the_stand_in_base_image_is_pinned_by_the_services_digest():
 
 
 def test_every_mode_has_a_fixture_in_the_script_and_a_step_in_ci():
-    assert set(server_module.MODES) == MODES, "server.py's modes are not the four this test names"
+    assert set(server_module.MODES) == MODES, "server.py's modes are not the five this test names"
     arms = re.findall(r"^    ([a-z]+(?:-[a-z]+)*)\)$", SCRIPT.read_text(), re.M)
     assert sorted(arms) == sorted(MUTATIONS), "the script's fixtures are not server.py's mutations"
     steps = re.findall(r"scripts/no-third-party-standin\.sh (\S+)", _site_job())
@@ -208,13 +265,19 @@ def test_the_site_job_runs_the_whole_check_against_the_stand_in():
 # --- the script, against a check that ends as told ---------------------------------------------
 
 FAKE_CHECK = """#!/usr/bin/env bash
-# Records what it was given, then ends as told.
+# Records what it was given, prints a banner shaped like the real one's (naming the fixture it was
+# handed, or the one in FAKE_BANNER_FIXTURE, or no banner at all if FAKE_NO_BANNER is set), then
+# ends as told.
 {
     echo "args: $*"
     echo "mode: $(cat "$LINKLING_WEB_DIR/mode")"
     echo "has_server: $([ -f "$LINKLING_WEB_DIR/server.py" ] && echo yes || echo no)"
     echo "max_time: ${LINKLING_NO3P_MAX_TIME:-unset}"
+    echo "fixture: ${LINKLING_NO3P_FIXTURE:-unset}"
 } >"$FAKE_RECORD"
+if [ -z "${FAKE_NO_BANNER:-}" ]; then
+    echo "project fake, api on http://127.0.0.1:1, site on http://127.0.0.1:2 (built from $LINKLING_WEB_DIR), site fixture ${FAKE_BANNER_FIXTURE:-${LINKLING_NO3P_FIXTURE:-none}}, compose mutation none"
+fi
 printf '%s\\n' "$FAKE_OUTPUT" >&2
 exit "$FAKE_STATUS"
 """
@@ -228,6 +291,10 @@ STALL_RED = (
     "blind: the site's /second.css answered '200' but its reply did not arrive whole "
     "(curl timed out after 5s), so what it serves there was not seen"
 )
+# The line `docker compose up --wait` printed in CI for a `web` that never listened (the project
+# there was linkling-no3p); the observer in front of the site is `<project>-obs-web-1`.
+UNHEALTHY = "container fake-web-1 is unhealthy"
+NEVER_RED = "blind: the stack never came up healthy, so nothing was exercised"
 
 
 @pytest.fixture
@@ -240,10 +307,12 @@ def tree(tmp_path):
     return tmp_path
 
 
-def _run(tree: Path, fixture: str | None, output: str, status: int):
+def _run(tree: Path, fixture: str | None, output: str, status: int, **extra_env: str):
     record = tree / "record.txt"
-    env = {**os.environ, "FAKE_OUTPUT": output, "FAKE_STATUS": str(status), "FAKE_RECORD": str(record)}
-    env.pop("LINKLING_NO3P_MAX_TIME", None)
+    env = {**os.environ, "FAKE_OUTPUT": output, "FAKE_STATUS": str(status), "FAKE_RECORD": str(record), **extra_env}
+    for name in ("LINKLING_NO3P_MAX_TIME", "LINKLING_NO3P_FIXTURE", "FAKE_BANNER_FIXTURE", "FAKE_NO_BANNER"):
+        if name not in extra_env:
+            env.pop(name, None)
     argv = ["bash", str(tree / "scripts" / SCRIPT.name)] + ([fixture] if fixture else [])
     done = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=60)
     return done, (record.read_text() if record.exists() else "")
@@ -255,6 +324,7 @@ def _run(tree: Path, fixture: str | None, output: str, status: int):
         ("external-stylesheet", "site fetched: /\n" + EXTERNAL_RED, 1),
         ("cut-short-reply", "site fetched: /\n" + CUT_RED, 2),
         ("stalled-reply", "site fetched: /\n" + STALL_RED, 2),
+        ("never-listens", UNHEALTHY + "\n" + NEVER_RED, 2),
     ],
 )
 def test_the_script_passes_when_the_check_ends_the_way_the_fixture_requires(tree, fixture, output, status):
@@ -264,6 +334,37 @@ def test_the_script_passes_when_the_check_ends_the_way_the_fixture_requires(tree
     # The whole check, with nothing narrowing it, against the stand-in in the fixture's mode.
     assert "args: \n" in record
     assert f"mode: {fixture}\n" in record and "has_server: yes\n" in record
+
+
+@pytest.mark.parametrize("fixture", sorted(MUTATIONS))
+def test_the_script_tells_the_check_which_fixture_it_is_running(tree, fixture):
+    outputs = {
+        "external-stylesheet": ("site fetched: /\n" + EXTERNAL_RED, 1),
+        "cut-short-reply": ("site fetched: /\n" + CUT_RED, 2),
+        "stalled-reply": ("site fetched: /\n" + STALL_RED, 2),
+        "never-listens": (UNHEALTHY + "\n" + NEVER_RED, 2),
+    }
+    output, status = outputs[fixture]
+    _, record = _run(tree, fixture, output, status)
+    assert f"fixture: {fixture}\n" in record
+
+
+@pytest.mark.parametrize(
+    "extra_env",
+    [
+        # A banner that names some other fixture, or the clean site: a stale label.
+        {"FAKE_BANNER_FIXTURE": "external-stylesheet"},
+        {"FAKE_BANNER_FIXTURE": "none"},
+        # No banner at all.
+        {"FAKE_NO_BANNER": "1"},
+    ],
+)
+def test_the_script_fails_when_the_banner_does_not_name_its_fixture(tree, extra_env):
+    # The check ends exactly as the fixture requires, so only the banner is wrong.
+    done, _ = _run(tree, "cut-short-reply", "site fetched: /\n" + CUT_RED, 2, **extra_env)
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert "pass:" not in done.stdout
+    assert "banner does not name the fixture ('site fixture cut-short-reply,')" in done.stderr
 
 
 def test_the_time_bound_is_forced_for_the_stalled_fixture_only(tree):
@@ -297,6 +398,20 @@ def test_the_time_bound_is_forced_for_the_stalled_fixture_only(tree):
         ("external-stylesheet", EXTERNAL_RED, 2, 2),
         # A usage error from the check is not a red either.
         ("external-stylesheet", "usage: scripts/no-third-party-check.sh", 64, 1),
+        # The site that never listens: the check went green, so the healthcheck did not stop `--wait`.
+        ("never-listens", "pass", 0, 1),
+        # Right message and status, but nothing says `unhealthy`: the stack failed to come up for
+        # some other reason (a build, a port), which proves nothing about the healthcheck.
+        ("never-listens", NEVER_RED, 2, 2),
+        ("never-listens", "blind: docker is not on PATH", 2, 2),
+        # Unhealthy, but not the site: the api, or the observer in front of the site, failed its own
+        # healthcheck, so the `web` healthcheck was never what stopped `--wait`.
+        ("never-listens", "container fake-api-1 is unhealthy\n" + NEVER_RED, 2, 2),
+        ("never-listens", "container fake-obs-web-1 is unhealthy\n" + NEVER_RED, 2, 2),
+        # Right message, wrong status: the message alone is not the verdict.
+        ("never-listens", UNHEALTHY + "\n" + NEVER_RED, 1, 1),
+        # `fail` where `blind` is required.
+        ("never-listens", UNHEALTHY + "\n" + NEVER_RED.replace("blind:", "fail:"), 1, 1),
     ],
 )
 def test_the_script_is_not_satisfied_by_any_other_way_of_ending(tree, fixture, output, status, expected_exit):

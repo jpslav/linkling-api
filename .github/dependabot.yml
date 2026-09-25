@@ -1,0 +1,50 @@
+# How the dependency locks and the base-image digests are kept current (LL-024, ADR-0018): a PR
+# is opened weekly when something moved, ci.yml's `pull_request` trigger runs on it, and a green
+# one is merged. Nobody has to remember. README "Keeping the pins fresh" says what each block does
+# and what a refresh PR holds.
+#
+# tests/test_ll024_pins_refresh.py fails if a Dockerfile exists that no `directories` entry of the
+# docker block covers, so adding one without adding it here is red, not silently stale. It looks for
+# lock files only at the repository root, so a lock added elsewhere needs its own block here.
+
+version: 2
+updates:
+  # requirements.lock.txt and requirements-build.lock.txt. Dependabot hands a lock to its pip-compile
+  # updater, which re-resolves the whole set, when a `.in` file of the same basename sits beside
+  # it (dependabot-core, python/lib/dependabot/python/pip_compile_file_matcher.rb): that is why
+  # requirements.lock.in exists. Without one Dependabot edits one pinned line at a time and never
+  # re-resolves, and measured on a stale copy of this lock it opened PRs that
+  # `pip install --require-hashes` refuses (pydantic-core moved on its own; pydantic requires its
+  # exact version). requirements-build.lock.txt is the exception and has no `.in` on purpose: its
+  # header says why. One group, so a release wave is one PR: the same stale copy, ungrouped, was
+  # thirteen.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      python-locks:
+        patterns: ["*"]
+
+  # Every Dockerfile that pins python:3.12-slim by digest: the service's, the observer the
+  # no-third-party check builds, and the stand-in site's. One group across the three, so their
+  # digests always move together (tests/test_ll028_standin_site.py and tests/test_ll024_pins_refresh.py
+  # fail if they differ). Left alone, Dependabot proposes python:3.12-slim -> 3.14-slim, a runtime
+  # upgrade; ignoring the minor and major moves keeps it to refreshing the digest of the tag we
+  # ship, which is what this item asked for. A move to another Python is its own piece of work.
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /scripts/no-third-party
+      - /tests/fixtures/standin-site
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      base-image:
+        patterns: ["python"]
+        group-by: dependency-name
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]

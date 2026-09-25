@@ -113,12 +113,45 @@ with the pages, what the host does outside the containers, or a proxy you put in
 runs it with `--api-only`, because CI cannot fetch `linkling-web`, and runs it again with a
 deliberate leak to show that it goes red, and again with a stats page that names a third-party
 stylesheet. A second CI job runs the whole check, site included, against a small stand-in for the
-site (`tests/fixtures/standin-site`, named with `LINKLING_WEB_DIR`), and then against three copies of
+site (`tests/fixtures/standin-site`, named with `LINKLING_WEB_DIR`), and then against four copies of
 it that each carry one defect the check must catch (`scripts/no-third-party-standin.sh`): a
-stylesheet on another origin (`fail`), and a stylesheet reply that stops short or never ends
-(`blind`). That shows the crawl runs, stops on its time bound and goes red. It says nothing about
-what `linkling-web` serves, and the stand-in is not nginx, so `deploy/nginx-privacy.conf` is not
-exercised either. Run it with the real site from a checkout that has `linkling-web` beside it.
+stylesheet on another origin (`fail`), a stylesheet reply that stops short or never ends
+(`blind`), and a site that never listens (`blind`, because the `web` healthcheck below keeps
+`docker compose up --wait` from returning). That shows the crawl runs, stops on its time bound and
+goes red. It says nothing about what `linkling-web` serves, and the stand-in is not nginx, so
+`deploy/nginx-privacy.conf` is not exercised either. Run it with the real site from a checkout that
+has `linkling-web` beside it. The first line of a whole-check run says which site it built and which
+defect, if any, was put in it (`site fixture none` for a real run, `site fixture cut-short-reply`
+under the wrapper), and separately which compose overlay `--mutate` layered in
+(`compose mutation none`); a `--api-only` run has no site to name and gives only the second.
+
+`docker compose up -d --wait` returns only once both services are answering: each has a
+healthcheck. `web`'s asks the site for `/` on port 80 with `wget` if its image has one (nginx's
+does) and `python3` if not (the stand-in's does), so an image with neither reports unhealthy
+instead of ready.
+
+### Keeping the pins fresh
+
+The image's Python dependencies (`requirements.lock.txt` and `requirements-build.lock.txt`) and its
+base image (`python:3.12-slim`, pinned by digest in three Dockerfiles: the service's, the
+observer that `scripts/no-third-party-check.sh` builds, and the stand-in site's) go stale on their
+own: a security release reaches no deployer until someone re-locks and re-pins. Dependabot does
+that (`.github/dependabot.yml`, `docs/adr/0018-dependabot-refreshes-the-locks-and-digests.md`).
+It is set to open, on Mondays, at most two pull requests, each only when something moved: one for
+the lock files, and one that moves the three digests together. CI's `pull_request` trigger
+(`.github/workflows/ci.yml`) covers them like any other pull request, and the image build in the
+`compose` and `no-third-party` jobs is what runs the websockets/wsproto guard
+(`scripts/no-forbidden-imports-check.sh`, called from the `Dockerfile`) against the new lock. A
+green one is merged; a red one is the exception to look at. Nobody has to re-lock or re-pin by hand.
+
+Two things make that work, and tests fail when either breaks. `requirements.lock.in` sits beside
+`requirements.lock.txt` and says what `pyproject.toml` says: that file is what makes Dependabot
+re-resolve the whole set instead of bumping one pinned line at a time, which leaves pins that
+cannot be installed together. (`requirements-build.lock.txt` has no such file on purpose; its
+header says why.) And every Dockerfile is listed in the config. A third test fails if a refresh PR
+leaves a lock without the pins it exists for, or a pin without its hashes. Dependabot is held to
+the `3.12-slim` tag: it refreshes that tag's digest and never proposes another Python. To re-lock
+by hand, use the command at the top of each lock file.
 
 ### Where the database lives
 

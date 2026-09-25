@@ -49,3 +49,21 @@ services:
       # fronting one origin with a proxy is fronting both.
       - "${LINKLING_BIND_ADDR:-127.0.0.1}:${LINKLING_WEB_PORT:-8080}:80"
     restart: unless-stopped
+    healthcheck:
+      # `docker compose up --wait` waits for this, so `web` is ready once it answers and not merely
+      # once it is running (LL-029). The image is linkling-web's, or in CI a python stand-in, so the
+      # probe uses the client the image has: wget (nginx:alpine), else python3 (the stand-in). An
+      # image with neither reports unhealthy rather than ready. Any 2xx from `/` counts. Both go to
+      # 127.0.0.1 inside the container, and nginx's logs are off (deploy/nginx-privacy.conf).
+      # Faster than the api's: the api applies its migrations at startup
+      # (src/linkling/server/app.py, `lifespan`) and nginx has nothing to do before it listens.
+      test:
+        - CMD-SHELL
+        - >-
+          wget -q -O /dev/null http://127.0.0.1:80/ 2>/dev/null
+          || python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+      start_interval: 1s
