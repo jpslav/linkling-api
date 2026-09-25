@@ -46,8 +46,8 @@ FORBIDDEN_IMPORTS_CHECK = ROOT / "scripts" / "no-forbidden-imports-check.sh"
 # from an index without hashes is a way back to testing something the image does not ship.
 UNHASHED_INSTALLS = {"pip install --no-cache-dir websockets >/dev/null"}
 
-# `pip`, `pip3`, `python -m pip` and `uv pip` all reach this.
-PIP_INSTALL = re.compile(r"\bpip3?\s+install\b")
+# `pip`, `pip3`, `pip3.12`, `python -m pip` and `uv pip` reach this, with options before `install`.
+PIP_INSTALL = re.compile(r"\bpip3?(?:\.\d+)?(?:\s+-\S+)*\s+install\b")
 # The package itself, with no dependencies of its own and nothing fetched to build it.
 PACKAGE_INSTALL = re.compile(r"pip install --no-deps --no-build-isolation (?:-e )?\.")
 
@@ -56,10 +56,15 @@ DOCKER_PIN = re.compile(r"^docker://\S+@sha256:[0-9a-f]{64}$")
 VERSION_COMMENT = re.compile(r"^v\d+(\.\d+)*$")
 
 
+def _workflow_files() -> list[Path]:
+    """The workflows, and the local composite actions they could call: both hold `run:` and `uses:`."""
+    return sorted(WORKFLOWS.glob("*.y*ml")) + sorted((ROOT / ".github" / "actions").glob("**/action.y*ml"))
+
+
 def _uses() -> list[tuple[Path, str, str]]:
     """Each `uses:` of each workflow as (file, reference, trailing comment), local ones left out."""
     found = []
-    for workflow in sorted(WORKFLOWS.glob("*.y*ml")):
+    for workflow in _workflow_files():
         for line in workflow.read_text().splitlines():
             match = re.match(r"^\s*-?\s*uses:\s*(\S+)[ \t]*(?:#[ \t]*(.*?))?[ \t]*$", line)
             if match and not match.group(1).startswith("./"):
@@ -184,12 +189,21 @@ def test_no_forbidden_imports_installs_what_the_image_ships_the_way_the_dockerfi
 
 
 def test_no_pip_install_in_any_workflow_reads_pyproject_ranges_or_skips_hashes():
-    workflows = sorted(WORKFLOWS.glob("*.y*ml"))
+    workflows = _workflow_files()
     assert CI in workflows, "the walk found no ci.yml"
     installs = []
     for workflow in workflows:
         text = workflow.read_text()
         assert ".[test]" not in text, f"{workflow.name} installs the `test` extra from pyproject.toml's ranges"
+        # Backstop for a `run:` written in a form `_commands` does not read (a value on the next
+        # line, a continued one-liner, a flow mapping): every install named outside a comment line
+        # has to be one of the statements read above, or the file is not being read as it is written.
+        named = sum(len(PIP_INSTALL.findall(line)) for line in text.splitlines() if not line.lstrip().startswith("#"))
+        read = sum(len(PIP_INSTALL.findall(command)) for command in _commands(text))
+        assert named == read, (
+            f"{workflow.name} names `pip install` {named} times outside comment lines and only {read} of "
+            "them are in a `run:` this reads, so one is written in a form this does not parse"
+        )
         for command in _commands(text):
             if not PIP_INSTALL.search(command):
                 continue
@@ -242,7 +256,9 @@ def test_the_test_lock_pins_nothing_the_image_is_forbidden_to_import():
     guard = FORBIDDEN_IMPORTS_CHECK.read_text()
     listed = re.search(r"for m in \(([^)]*)\) if importlib", guard)
     assert listed, f"{FORBIDDEN_IMPORTS_CHECK.name} no longer lists its modules in the form this reads"
-    forbidden = re.findall(r'"([A-Za-z0-9_.-]+)"', listed.group(1))
+    # Module names, compared as package names as _locked writes them: right for websockets and
+    # wsproto, where the two are the same word.
+    forbidden = [name.lower().replace("_", "-") for name in re.findall(r'"([A-Za-z0-9_.-]+)"', listed.group(1))]
     assert len(forbidden) >= 2, f"read {forbidden} out of {FORBIDDEN_IMPORTS_CHECK.name}"
     # pytest runs uvicorn in-process (tests/conftest.py): with one of these importable it would log a
     # WebSocket client's address, the leak the guard exists to keep out of the image.
