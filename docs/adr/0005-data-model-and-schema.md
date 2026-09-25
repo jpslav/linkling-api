@@ -65,7 +65,7 @@ name, answers 410, and is removed only by an explicit delete.
   immediately after following (`#L67`); a buffered counter is faster but makes the demo racy
   and loses counts on a crash. SQLite in WAL mode with a busy timeout is a tuning choice,
   not a door, and is deliberately not carried as one.
-- A tombstone stores only a name and a date, which the privacy page states in one clause.
+- A tombstone keeps `id`, `name`, `created_at`, `expires_at` and `deleted_at` (ADR-0020 d). Its `target` is stored as the empty string, because the column is `NOT NULL`; that was decided 2026-09-25 and stays. Its `created_by` and its counts are gone. The privacy page states this in one clause. Since ADR-0021, none of what was dropped survives in the database file's freed space either.
 
 **What would settle the tuning question:** with WAL on, how many redirects per second does
 one worker sustain on the target machine with the synchronous increment? If it is in the

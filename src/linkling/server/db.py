@@ -31,10 +31,14 @@ defect in ``connect`` -- see ``_enable_wal``.
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
+import struct
 import time
+import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
@@ -47,8 +51,25 @@ _WAL_ATTEMPTS = 20
 _WAL_RETRY_SECONDS = 0.05
 
 
+#: Counts at which SQLite's record format stores an integer in more bytes than the count
+#: before it (https://sqlite.org/fileformat2.html, "Serial Type Codes"): 1 is stored in no
+#: bytes, 2..127 in one, 128..32767 in two, and so on. At these counts the counter's cell
+#: grows and moves; at every other count SQLite overwrites it in place. A count of 1 is a
+#: new row. ADR-0021.
+RELAYOUT_COUNTS = frozenset({1, 2, 128, 32768, 8388608, 2147483648, 140737488355328})
+
+#: What the header's file change counter and version-valid-for (offsets 24 and 92) are set
+#: back to after a canonicalisation. Any constant works; what matters is that it is not a
+#: tally of past writes. ADR-0021.
+_CHANGE_COUNTER = 1
+
+
 class MigrationError(RuntimeError):
     """The migrations on disk, or the state of the database, are not usable."""
+
+
+class CanonicaliseError(RuntimeError):
+    """The canonical copy of the database did not match it, so it was not copied back."""
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
@@ -66,11 +87,27 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     ``sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in
     that same thread``. Each connection here is still owned by exactly one request from
     open to close, which is the property the thread check exists to protect.
+
+    The path is opened as a ``file:`` URI because ``canonicalise`` names an in-memory
+    database in ``VACUUM INTO``, and SQLite reads that name as a URI only when the
+    connection running it was opened with URIs on. Without it the name became a literal
+    file and the copy-back overwrote a scratch database with an empty one -- measured,
+    which is why ``canonicalise`` also refuses to copy back a copy whose rows differ.
+
+    ``secure_delete`` zeroes freed bytes (ADR-0021), and ``temp_store=MEMORY`` keeps the
+    temporary tables SQLite builds out of files in the temp directory.
     """
-    conn = sqlite3.connect(str(db_path), isolation_level=None, check_same_thread=False)
+    conn = sqlite3.connect(
+        "file:" + quote(str(db_path)),
+        uri=True,
+        isolation_level=None,
+        check_same_thread=False,
+    )
     conn.row_factory = sqlite3.Row
     conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA secure_delete=ON")
+    conn.execute("PRAGMA temp_store=MEMORY")
     _enable_wal(conn)
     return conn
 
@@ -98,6 +135,116 @@ def _enable_wal(conn: sqlite3.Connection) -> bool:
                 return False
             time.sleep(_WAL_RETRY_SECONDS)
     return False
+
+
+def settle(conn: sqlite3.Connection, *, relayout: bool) -> None:
+    """Leave the files holding the database's content and nothing about how it got there.
+
+    Every write path calls this after it commits (ADR-0021). ``relayout`` says whether the
+    write could have moved a cell: a create, a delete, or a follow whose new count is in
+    ``RELAYOUT_COUNTS``. Such a write is followed by ``canonicalise``, because SQLite places
+    a new or grown cell in the page's free space, so byte offsets would give back the order
+    of each day's first follows. Every write is then checkpointed with ``TRUNCATE``, which
+    copies the WAL into the database and cuts the ``-wal`` to 0 bytes, so no frame of an
+    earlier write survives it.
+
+    A checkpoint that another connection's open read holds up comes back busy and leaves
+    the frames: measured as ``(1, 1, 0)`` and a 4,152-byte ``-wal``. The service holds one
+    connection at a time (``app.get_conn``), so only a process outside it can cause that,
+    and the next write's checkpoint takes the frames with it.
+    """
+    if relayout:
+        canonicalise(conn)
+    busy, frames, _done = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    if relayout and (busy, frames) == (0, 0):
+        _reset_change_counter(conn)
+
+
+def canonicalise(conn: sqlite3.Connection) -> None:
+    """Rewrite the database file so its bytes depend only on its content (ADR-0021).
+
+    ``VACUUM INTO`` a fresh in-memory database writes every table in key order into new
+    pages. The backup API then copies those pages over this file in one transaction. Two
+    databases with the same rows, written in different orders, come out byte-identical --
+    except for the header counters, which the rest of this function and
+    ``_reset_change_counter`` put back.
+
+    Plain ``VACUUM`` gives the same page layout at the same cost (12-19 ms against 14-17 ms
+    on a 2.2 MB file), but only the copy-back lets the counters be put back.
+
+    The copy is checked before it is copied back: every table must have the same number
+    of rows as here. That check is not ceremony. Without URIs on this connection, the
+    in-memory name went to a file of that literal name and the backup copied an empty
+    database over the real one.
+
+    The backup raises the schema cookie by one. The cookie is set back only when
+    ``sqlite_schema`` -- every name, root page and statement -- is unchanged, so any
+    connection that cached the schema at that cookie still holds a correct one.
+    Otherwise the cookie would count canonicalisations, and through them the days a
+    since-deleted link was followed.
+    """
+    schema_sql = "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_schema ORDER BY rowid"
+    schema = [tuple(row) for row in conn.execute(schema_sql)]
+    cookie = int(conn.execute("PRAGMA schema_version").fetchone()[0])
+    tables = [name for kind, name, *_ in schema if kind == "table"]
+    rows = [_row_count(conn, table) for table in tables]
+
+    name = f"file:linkling-canonical-{uuid.uuid4().hex}?mode=memory&cache=shared"
+    copy = sqlite3.connect(name, uri=True, isolation_level=None)
+    try:
+        conn.execute("VACUUM INTO ?", (name,))
+        copied = [_row_count(copy, table) for table in tables]
+        if copied != rows:
+            raise CanonicaliseError(
+                f"the canonical copy holds {copied} rows per table against {rows} in the "
+                f"database ({tables}) -- not copying it back"
+            )
+        copy.backup(conn)
+    finally:
+        copy.close()
+
+    if [tuple(row) for row in conn.execute(schema_sql)] == schema:
+        conn.execute(f"PRAGMA schema_version={cookie}")
+
+
+def _row_count(conn: sqlite3.Connection, table: str) -> int:
+    quoted = '"' + table.replace('"', '""') + '"'
+    return int(conn.execute(f"SELECT count(*) FROM {quoted}").fetchone()[0])
+
+
+def _reset_change_counter(conn: sqlite3.Connection) -> None:
+    """Put the header's change counter back to a constant after a canonicalisation.
+
+    SQL cannot do this, so it is 8 bytes written to the file: offsets 24 and 92, the file
+    change counter and version-valid-for (https://sqlite.org/fileformat2.html). In WAL
+    mode ordinary writes leave the counter alone -- 2 after 300 follows, measured -- but a
+    commit that rewrites page 1 on a fresh connection writes the counter it last read plus
+    one, and the backup always rewrites page 1. Left alone, it counted canonicalisations:
+    history A and history B, differing in how often a since-deleted link was followed,
+    ended at 152 and 153.
+
+    Why this is safe: "In WAL mode, changes to the database are detected using the
+    wal-index and so the change counter is not needed" (the same page). A second
+    connection with a warm page cache, open across a reset, read each of 5 later writes
+    correctly and ``integrity_check`` said ``ok``. The write happens only in WAL mode,
+    only after a checkpoint that left the WAL empty, and inside ``BEGIN IMMEDIATE``, so no
+    other writer or checkpoint can touch the file meanwhile.
+    """
+    if conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+        return
+    path = conn.execute("PRAGMA database_list").fetchone()["file"]
+    counter = struct.pack(">I", _CHANGE_COUNTER)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        fd = os.open(path, os.O_RDWR)
+        try:
+            os.pwrite(fd, counter, 24)
+            os.pwrite(fd, counter, 92)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    finally:
+        conn.execute("COMMIT")
 
 
 def discover_migrations(directory: Path | None = None) -> list[tuple[int, Path]]:

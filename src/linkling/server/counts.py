@@ -19,7 +19,7 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 
-from . import links
+from . import db, links
 
 #: The clock. Module-level so a test can drive it across midnight UTC instead of waiting.
 _epoch_seconds = time.time
@@ -27,7 +27,8 @@ _epoch_seconds = time.time
 _INCREMENT = (
     "INSERT INTO daily_counts(link_id, day, count) "
     "SELECT id, ?, 1 FROM links WHERE name = ? AND deleted_at IS NULL "
-    "ON CONFLICT(link_id, day) DO UPDATE SET count = count + 1"
+    "ON CONFLICT(link_id, day) DO UPDATE SET count = count + 1 "
+    "RETURNING count"
 )
 
 #: One statement, so whether the link exists, whether it is deleted and its counts all come
@@ -48,9 +49,16 @@ def utc_day(epoch_seconds: float) -> str:
 
 
 def record_follow(conn: sqlite3.Connection, name: str) -> bool:
-    """Add one to today's count for ``name``. False if the link is deleted (or absent)."""
-    cursor = conn.execute(_INCREMENT, (utc_day(_epoch_seconds()), name))
-    return cursor.rowcount == 1
+    """Add one to today's count for ``name``. False if the link is deleted (or absent).
+
+    The new count comes back from the statement, and it decides whether the write can have
+    moved a cell (``db.RELAYOUT_COUNTS``) and so whether ``db.settle`` rewrites the file.
+    """
+    row = conn.execute(_INCREMENT, (utc_day(_epoch_seconds()), name)).fetchone()
+    if row is None:
+        return False
+    db.settle(conn, relayout=row[0] in db.RELAYOUT_COUNTS)
+    return True
 
 
 def days_for(conn: sqlite3.Connection, name: str) -> dict[str, int]:

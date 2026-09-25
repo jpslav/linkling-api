@@ -12,6 +12,7 @@ at the same time.
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,6 +29,11 @@ TARGET = "https://example.com/a/very/long/tracking/url?utm_source=slide&id=12|34
 
 STARTUP_TIMEOUT_SECONDS = 20
 LONG_URL_BODY = b"arrived at the long url"
+
+
+def pytest_report_header() -> str:
+    """Name the SQLite the suite ran against: secure_delete and WAL differ across versions (LL-033)."""
+    return f"sqlite3.sqlite_version: {sqlite3.sqlite_version}"
 
 
 @pytest.fixture

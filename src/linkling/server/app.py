@@ -37,15 +37,18 @@ from __future__ import annotations
 import base64
 import hmac
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated
 from urllib.parse import urlsplit
 
+import anyio
+
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict
+from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import MutableHeaders
 
 from . import counts, db, links, names, privacy, stats
@@ -298,6 +301,9 @@ def create_app(config: Config | None = None) -> FastAPI:
         conn = db.connect(settings.db_path)
         try:
             db.migrate(conn)
+            # Also rewrites a file written by an earlier version, or restored from a
+            # backup, into the layout ADR-0021 keeps from here on.
+            db.settle(conn, relayout=True)
         finally:
             conn.close()
         yield
@@ -315,15 +321,27 @@ def create_app(config: Config | None = None) -> FastAPI:
         redirect_slashes=False,
     )
     app.state.config = settings
+    app.state.db_lock = anyio.Lock()
     app.add_middleware(NoStoreMiddleware)
     app.add_middleware(BodyLimitMiddleware)
 
-    def get_conn(request: Request) -> Iterator[sqlite3.Connection]:
-        conn = db.connect(request.app.state.config.db_path)
-        try:
-            yield conn
-        finally:
-            conn.close()
+    async def get_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
+        """One connection, and only one at a time, from open to close (ADR-0021).
+
+        While two of the service's connections overlap, the ``-shm`` they share counts every
+        write made in the overlap, and a truncating checkpoint can be held up by the other
+        connection's read, leaving earlier writes' frames in the ``-wal``. The lock is an
+        ``anyio.Lock`` awaited on the event loop, not a ``threading.Lock``: a request
+        waiting for it holds no worker thread, so a full threadpool cannot starve the
+        request that holds it. Opening and closing still run in the threadpool, as they
+        did when this dependency was synchronous.
+        """
+        async with request.app.state.db_lock:
+            conn = await run_in_threadpool(db.connect, request.app.state.config.db_path)
+            try:
+                yield conn
+            finally:
+                await run_in_threadpool(conn.close)
 
     def body_within_limit(request: Request) -> None:
         """Answer 413 for a chunked body the middleware had to cut off.
