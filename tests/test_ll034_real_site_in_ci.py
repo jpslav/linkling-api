@@ -5,9 +5,9 @@ no-third-party check with LINKLING_WEB_DIR pointed at that checkout, and runs th
 against an empty and an absent directory. Running it needs Docker and the network, so the job
 itself is CI's. What does not is pinned here, in the fast job:
 
-- the second checkout names linkling-web, its trunk and a path inside the workspace, carries no
-  token, key or secret, and the workflows hold no reference to a secret or to the deploy key LL-034
-  did without;
+- the second checkout names linkling-web, its trunk and a path inside the workspace, passes no
+  token or key input and does not persist the action's own token, and the workflows refer to no
+  secret and name no deploy key;
 - the step that runs the check points LINKLING_WEB_DIR at exactly the directory that checkout
   writes to, is not `--api-only`, and comes after the checkout and after the stand-in's steps;
 - the step that runs the check's blind arm is judged by what it does, not by how it reads: it is
@@ -81,13 +81,14 @@ def test_the_real_site_checkout_comes_after_the_one_of_this_repository():
     assert min(plain) < index, "the real site is checked out before this repository"
 
 
-def test_the_real_site_is_read_with_no_credential():
+def test_the_real_site_is_read_with_no_deploy_key_or_secret():
     _, step = _real_site_checkout()
     assert not re.search(r"^\s+(?:token|ssh-key|ssh-known-hosts|ssh-user):", step, re.M), (
-        "the real-site checkout passes a credential; linkling-web is public and needs none"
+        "the real-site checkout passes a `token:` or an SSH key input; linkling-web is public and needs neither"
     )
-    # The action's own token would otherwise stay configured in linkling-web/.git, which is the
-    # web image's build context, and nothing after the checkout fetches or pushes.
+    # By default the action leaves its token configured in the checkout's local config
+    # (action.yml, `persist-credentials`), and this checkout is the web image's build context.
+    # Nothing after the checkout fetches or pushes.
     assert re.search(r"^\s+persist-credentials: false$", step, re.M), "the real-site checkout persists credentials"
     workflows = sorted(WORKFLOWS.glob("*.y*ml"))
     assert CI in workflows, "the walk found no ci.yml"

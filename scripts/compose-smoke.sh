@@ -16,8 +16,9 @@
 # on Linux it ends up owned by the container's uid, and removing it is not this script's to
 # risk. The team key is random per run and never printed.
 #
-# Only the `api` service is built. The site needs the sibling linkling-web checkout, which
-# CI cannot fetch (ADR-0015 consequences).
+# Only the `api` service is built, so this needs no linkling-web checkout.
+# scripts/no-third-party-check.sh builds the site, from the checkout LINKLING_WEB_DIR names
+# (ADR-0015).
 #
 # Exit status: 0 `pass`, 1 `fail: <step>`, 2 `blind: <what was absent>`. Blind means the
 # check could not look, which is different from looking and finding a problem.

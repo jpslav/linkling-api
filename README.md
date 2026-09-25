@@ -127,9 +127,9 @@ check against an empty directory and an absent one and requires `blind`, so a ch
 nothing to crawl cannot read as a clean site. The real-site run follows `linkling-web`'s `main`, so
 a push there can turn a build here red. To run the same check yourself, put a checkout of
 `linkling-web` beside this repository (or name it with `LINKLING_WEB_DIR`). The first line of a
-whole-check run says which site it built and which
-defect, if any, was put in it (`site fixture none` for a real run, `site fixture cut-short-reply`
-under the wrapper), and separately which compose overlay `--mutate` layered in
+whole-check run says which site it built and which defect, if any, was put in it
+(`site fixture none` for a real run, `site fixture cut-short-reply` under the wrapper), and
+separately which compose overlay `--mutate` layered in
 (`compose mutation none`); a `--api-only` run has no site to name and gives only the second.
 
 `docker compose up -d --wait` returns only once both services are answering: each has a
