@@ -1,7 +1,7 @@
 # ADR-0021 — The database file is rewritten into a canonical layout after every write that can move a cell, so a copy of it holds nothing finer than a day about a click
 
-- Status: Proposed
-- Approver: (pending)
+- Status: Accepted
+- Approver: pm-4, under the owner's delegation of 2026-09-22
 - Date: 2026-09-25
 
 ## Context
@@ -51,7 +51,7 @@ once in review round 1, and nothing here was re-measured there.
 
 ## Decision
 
-**Proposed.** Everything below is done by the running service. Nothing is scheduled, and
+Everything below is done by the running service. Nothing is scheduled, and
 nothing is anybody's chore.
 
 1. **Every connection sets `secure_delete=ON` and `temp_store=MEMORY`**
@@ -143,6 +143,9 @@ if a future SQLite starts using the counter in WAL mode.
 - **A write that fails to settle fails its request.** A settle that raises, after the write
   has committed, answers 500, so a follow can be counted and still answer 500. That is the
   same failure class ADR-0014 accepts for a failed count write. The rewrite stays owed.
+- **A rewrite is a full `VACUUM`,** run on each link's first follow of a UTC day (and on
+  its second, on a create and on a delete), so its cost grows with the file's size. That
+  is fine at a team's scale -- 12-19 ms on a 2.2 MB file -- and a known limit beyond it.
 - **Reads now queue behind writes.** A write held up by another process's write lock (up
   to the 5 s busy timeout) holds the service's lock, and the requests behind it wait,
   reads included. Before this ADR, WAL let reads through.
@@ -165,3 +168,16 @@ if a future SQLite starts using the counter in WAL mode.
     the old copies of pages an SSD has remapped. The promise covers a copy of the files.
   - *Backups already taken* under the earlier layout keep that layout's residue. Nothing
     here can reach them.
+
+## Decision record
+
+Accepted 2026-09-25 by `pm-4`, the program manager, under the 2026-09-22 ruling in
+`company/DECISIONS.md` of the program repo ("What reaches the owner is user-visible impact,
+not cost to undo"). The plan reviewer classified this design `REACHES-OWNER: no`: how the
+database file is laid out is below the owner's line, and it carries out the owner's own
+ruling of 2026-09-25. Before accepting, `pm-4` reviewed the direct header write
+(`db._reset_change_counter`, `db._header_fd`). It runs only in WAL mode, after a checkpoint
+that emptied the WAL, inside `BEGIN IMMEDIATE`, and is fsynced. It sets offsets 24 and 92 to
+the same value, so the in-header size stays trusted; a crash between the two writes leaves
+SQLite recomputing the size from the file. Proposed the same day by the `w-LL-033` session
+in jpslav/linkling-api#23.
