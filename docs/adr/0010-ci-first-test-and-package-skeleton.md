@@ -27,6 +27,15 @@ before LL-001 lands.
    (`pytest>=8`). CI runs `pip install -e ".[test]"` — installing *the project's declared
    dependencies*, not a hardcoded pytest install — so when LL-001 adds FastAPI as a real
    dependency, CI does not need to change.
+   > ⚠️ **Superseded 2026-09-25 — see ADR-0019 (LL-030, api #20).** CI no longer runs
+   > `pip install -e ".[test]"`. The `test` job in `.github/workflows/ci.yml` installs
+   > `requirements.lock.txt`, `requirements-test.lock.txt` and `requirements-build.lock.txt`
+   > under `pip install --require-hashes`, then `pip install --no-deps --no-build-isolation -e .`,
+   > then runs `pytest -q`. A dependency added to `pyproject.toml` is therefore no longer picked
+   > up by CI on its own: it has to be re-locked (README, "Keeping the pins fresh"). The
+   > `test` extra is still declared in `pyproject.toml` and is still what a developer's
+   > virtualenv installs (README). The text above is left as written; this note was added by
+   > LL-032.
 2. **The one real test has two parts, both asserting configuration truth rather than
    application behavior:**
    - `test_ci_pins_python_312` — `assert sys.version_info[:2] == (3, 12)`. Verified locally:
@@ -51,6 +60,10 @@ before LL-001 lands.
 - LL-001 imports into an already-installable `linkling` package and adds real dependencies
   to `pyproject.toml`'s `dependencies` list; the CI workflow (`pip install -e ".[test]"`)
   does not need to change.
+  > ⚠️ **Superseded 2026-09-25 — see the note at Decision 1 and ADR-0019.** The workflow no
+  > longer contains that command: the `test` job installs the three hash-locked files, then
+  > the package with `--no-deps --no-build-isolation`, then runs `pytest -q`. The text above
+  > is left as written; this note was added by LL-032.
 - The two tests will very likely be superseded by real application tests once LL-001 lands
   — they exist to make CI meaningful before there is anything else to check, not as
   permanent fixtures. Deleting them once real tests exist is expected, not a regression.

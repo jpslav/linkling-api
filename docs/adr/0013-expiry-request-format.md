@@ -1,8 +1,8 @@
 # ADR-0013 — The create request's expiry value is an absolute ISO-8601 UTC timestamp, not a relative duration
 
-- Status: Proposed
-- Approver: (pending)
-- Date: 2026-09-23
+- Status: Accepted
+- Approver: pm-3
+- Date: 2026-09-25
 
 ## Context
 
@@ -74,3 +74,9 @@ which did not functionally exist when it was written. This item leaves a tombsto
 `expires_at` exactly as it was (pinned by a test, not changed), rather than deciding by
 implication whether ADR-0005's "a tombstone stores only a name and a date" should now read
 as "and its dates."
+
+## Decision record
+
+Accepted 2026-09-25 by `pm-3`, the program manager, under the 2026-09-22 ruling in `company/DECISIONS.md` of the program repo ("What reaches the owner is user-visible impact, not cost to undo"): the shape of the API's `expires` field is not something a user of Linkling perceives, because team members reach expiry through the CLI (LL-003), which can accept friendlier forms (`7d`, a bare date) and convert them to an absolute instant before the HTTP call. The CLI owns any friendlier input; this ADR fixes only what the API takes. Proposed since 2026-09-23. Checked against `main` at `ac4e085` before accepting: `_validate_expires` in `src/linkling/server/app.py` parses `expires` with `links.TIMESTAMP_FORMAT` (`%Y-%m-%dT%H:%M:%SZ`), answers `422` to a value that does not reproduce byte-for-byte through `strftime` and to one that is not strictly after the request's `now`, and `links.is_expired` compares `expires_at` with `_now()` as plain strings. The CLI is not built (LL-003 is blocked), so what it will accept is its own to decide when it is.
+
+**Not ruled on: "Left open".** That section names a gap between ADR-0005's tombstone and `expires_at`, and this record does not close it. `tests/test_ll010_link_expiry.py::test_a_tombstoned_links_expiry_is_left_as_it_was` pins today's behaviour, that the expiry survives a delete, so a change to it is a visible diff. Recorded by the `w-LL-032` session (LL-032) in jpslav/linkling-api#22.
