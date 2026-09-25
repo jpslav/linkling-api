@@ -8,14 +8,15 @@ start pointing somewhere else. The mechanism is the tombstone row: the ``links``
 with its ``name``, so the ``UNIQUE`` constraint refuses the name to everybody afterwards,
 including the generator.
 
-What a tombstone keeps is a privacy promise as well as a naming one: ADR-0005 says a
-tombstone "stores only a name and a date", and ADR-0008c names "a tombstone dropping its
-target" as behaviour a retention test asserts. ADR-0005's own DDL declares
-``target TEXT NOT NULL``, so the dropped target is written as the empty string -- the only
-reading under which both of those sentences are true at once. It is raised as an open
-question for the owner in this item's plan (the `PLAN:` comment on jpslav/linkling-api#2,
-§3a) and in its report: if the column should be nullable instead, that is a change to an
-unreleased migration today and a table rebuild after the first deployment.
+What a tombstone keeps is a privacy promise as well as a naming one: ADR-0008c names "a
+tombstone dropping its target" as behaviour a retention test asserts, and ADR-0005's DDL
+declares ``target TEXT NOT NULL``, so the dropped target is written as the empty string.
+Whether the column should be nullable instead was put to the owner and decided on
+2026-09-25, by ``pm-3`` under the owner's line: the empty string stands. ADR-0005's
+consequence sentence now says so (LL-033). Deleting also rewrites the database file
+(``db.settle``, ADR-0021), so the old target is not left behind in freed space either --
+once the rewrite has landed, which another process holding a read open can put off
+(ADR-0021, "What stays").
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from . import names
+from . import db, names
 
 #: How many times the generator may collide before the service gives up and says so.
 #: ADR-0002 puts the chance of at least one collision over the product's life at about
@@ -94,6 +95,9 @@ def create(
         )
     except sqlite3.IntegrityError as exc:
         raise NameTaken(name) from exc
+    # A new row is a new cell: rewrite the file so its layout says nothing of the order
+    # writes arrived in (ADR-0021).
+    db.settle(conn, relayout=True)
     return Link(name=name, target=target, deleted=False, expired=False)
 
 
@@ -182,6 +186,10 @@ def delete(conn: sqlite3.Connection, name: str) -> None:
         (_now(), name),
     )
     if cursor.rowcount == 1:
+        # The tombstone shrinks the row and the trigger frees the link's count cells.
+        # Rewriting the file leaves no trace of either in freed space, not even the
+        # lengths of what was freed (ADR-0021).
+        db.settle(conn, relayout=True)
         return
     # The UPDATE is what decides, so two callers racing on one name cannot both be told
     # they deleted it: the loser's rowcount is 0 and it reads the row to say which "no"
