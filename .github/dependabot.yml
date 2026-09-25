@@ -16,7 +16,7 @@ updates:
   - package-ecosystem: pip
     directory: /
     schedule:
-      interval: fortnightly
+      interval: weekly
       day: monday
     groups:
       python-locks:
