@@ -1,7 +1,7 @@
-# How the dependency locks and the base-image digests are kept current (LL-024, ADR-0018): a PR
-# is opened weekly when something moved, ci.yml's `pull_request` trigger runs on it, and a green
-# one is merged. Nobody has to remember. README "Keeping the pins fresh" says what each block does
-# and what a refresh PR holds.
+# How the dependency locks, the base-image digests and the GitHub Actions pins are kept current
+# (LL-024, ADR-0018; LL-030, ADR-0019): a PR is opened weekly when something moved, ci.yml's
+# `pull_request` trigger runs on it, and a green one is merged. Nobody has to remember. README
+# "Keeping the pins fresh" says what each block does and what a refresh PR holds.
 #
 # tests/test_ll024_pins_refresh.py fails if a Dockerfile exists that no `directories` entry of the
 # docker block covers, so adding one without adding it here is red, not silently stale. It looks for
@@ -9,10 +9,11 @@
 
 version: 2
 updates:
-  # requirements.lock.txt and requirements-build.lock.txt. Dependabot hands a lock to its pip-compile
-  # updater, which re-resolves the whole set, when a `.in` file of the same basename sits beside
-  # it (dependabot-core, python/lib/dependabot/python/pip_compile_file_matcher.rb): that is why
-  # requirements.lock.in exists. Without one Dependabot edits one pinned line at a time and never
+  # requirements.lock.txt, requirements-test.lock.txt and requirements-build.lock.txt. Dependabot
+  # hands a lock to its pip-compile updater, which re-resolves the whole set, when a `.in` file of
+  # the same basename sits beside it (dependabot-core,
+  # python/lib/dependabot/python/pip_compile_file_matcher.rb): that is why requirements.lock.in and
+  # requirements-test.lock.in exist. Without one Dependabot edits one pinned line at a time and never
   # re-resolves, and measured on a stale copy of this lock it opened PRs that
   # `pip install --require-hashes` refuses (pydantic-core moved on its own; pydantic requires its
   # exact version). requirements-build.lock.txt is the exception and has no `.in` on purpose: its
@@ -48,3 +49,17 @@ updates:
     ignore:
       - dependency-name: python
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  # The actions in .github/workflows, each pinned by commit SHA with its tag in a trailing comment
+  # (LL-030, ADR-0019). `directory: /` is how this ecosystem is pointed at `.github/workflows`. One
+  # group, so a wave of releases is one PR, and no `ignore`: a new major of an action is a PR to
+  # read, like any other. tests/test_ll030_locked_ci.py fails if a `uses:` in a workflow is not
+  # pinned by SHA, so an action added by tag is red, not silently unpinned.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
