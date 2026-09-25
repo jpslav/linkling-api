@@ -288,7 +288,9 @@ STALL_RED = (
     "blind: the site's /second.css answered '200' but its reply did not arrive whole "
     "(curl timed out after 5s), so what it serves there was not seen"
 )
-UNHEALTHY = "dependency failed to start: container fake-web-1 is unhealthy"
+# The line `docker compose up --wait` printed in CI for a `web` that never listened (the project
+# there was linkling-no3p); the observer in front of the site is `<project>-obs-web-1`.
+UNHEALTHY = "container fake-web-1 is unhealthy"
 NEVER_RED = "blind: the stack never came up healthy, so nothing was exercised"
 
 
@@ -399,6 +401,10 @@ def test_the_time_bound_is_forced_for_the_stalled_fixture_only(tree):
         # some other reason (a build, a port), which proves nothing about the healthcheck.
         ("never-listens", NEVER_RED, 2, 2),
         ("never-listens", "blind: docker is not on PATH", 2, 2),
+        # Unhealthy, but not the site: the api, or the observer in front of the site, failed its own
+        # healthcheck, so the `web` healthcheck was never what stopped `--wait`.
+        ("never-listens", "container fake-api-1 is unhealthy\n" + NEVER_RED, 2, 2),
+        ("never-listens", "container fake-obs-web-1 is unhealthy\n" + NEVER_RED, 2, 2),
         # Right message, wrong status: the message alone is not the verdict.
         ("never-listens", UNHEALTHY + "\n" + NEVER_RED, 1, 1),
         # `fail` where `blind` is required.

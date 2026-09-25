@@ -13,8 +13,9 @@
 #   never-listens        `blind`, because the stack never came up healthy: the site's container
 #                        runs and binds nothing, and compose.yaml's `web` healthcheck must keep
 #                        `docker compose up --wait` from returning (LL-029). The check's output
-#                        must also say `is unhealthy`, or the stack failed to come up for some
-#                        other reason and this proved nothing about the healthcheck
+#                        must also hold a line saying the `web` container is unhealthy (not the api,
+#                        not the observer in front of the site), or the stack failed to come up for
+#                        some other reason and this proved nothing about the healthcheck
 #
 # It judges the exit status AND the check's last line, not the status alone: `blind` is exit 2
 # whether the crawl saw a cut-short reply or the stack never came up, and only the first is what
@@ -45,7 +46,9 @@ usage() { echo "usage: $0 external-stylesheet|cut-short-reply|stalled-reply|neve
 
 [ $# = 1 ] || usage
 fixture="$1"
-# Text the check's output must also hold, beyond its last line; empty for a fixture that needs none.
+# What the check's output must also hold, beyond its last line: `want_web_unhealthy` says whether a
+# line must report the `web` container unhealthy, and `want_also` is how the messages below put it.
+want_web_unhealthy=0
 want_also=""
 case "$fixture" in
     external-stylesheet)
@@ -61,7 +64,8 @@ case "$fixture" in
     never-listens)
         want_status=2
         want_text="blind: the stack never came up healthy, so nothing was exercised"
-        want_also="is unhealthy" ;;
+        want_web_unhealthy=1
+        want_also="a line saying the web container is unhealthy" ;;
     *) usage ;;
 esac
 
@@ -90,7 +94,13 @@ case "$last" in
     *) text_ok=0 ;;
 esac
 also_ok=1
-if [ -n "$want_also" ] && ! grep -qF "$want_also" "$work/out"; then also_ok=0; fi
+# Compose names the site's container `<project>-web-1` and the observer in front of it
+# `<project>-obs-web-1`, and prints `container <name> is unhealthy` for the one that failed. One awk,
+# not a pipeline of greps: `grep -q` at the end of one would leave the others a SIGPIPE under pipefail.
+if [ "$want_web_unhealthy" = 1 ] \
+    && ! awk '/ is unhealthy/ && /-web-1 is unhealthy/ && !/obs-web-1/ { found = 1 } END { exit !found }' "$work/out"; then
+    also_ok=0
+fi
 if [ "$status" = "$want_status" ] && [ "$text_ok" = 1 ] && [ "$also_ok" = 1 ]; then
     # The banner is the first thing the check prints that a reader of CI's log will look for, and
     # it must say this run is not the clean site (`mutation none` used to be all it said).
@@ -98,7 +108,7 @@ if [ "$status" = "$want_status" ] && [ "$text_ok" = 1 ] && [ "$also_ok" = 1 ]; t
         || fail "the check ended as the '$fixture' defect requires, but its banner does not name the fixture ('site fixture $fixture,'), so the log would not say which defect this run was put there for"
     echo "pass: the check ended $status on the '$fixture' defect, as it must, and its banner named the fixture"
 elif [ "$status" = 2 ]; then
-    blind "the check was blind on '$fixture' in a way that is not this fixture's, so it showed nothing. It must end: $want_text${want_also:+, and its output must say '$want_also'} ... It ended: $last"
+    blind "the check was blind on '$fixture' in a way that is not this fixture's, so it showed nothing. It must end: $want_text${want_also:+, and its output must hold $want_also} ... It ended: $last"
 else
-    fail "the check must end $want_status ('${want_text%%:*}') on '$fixture'. It must end: $want_text${want_also:+, and its output must say '$want_also'} ... It ended $status: $last"
+    fail "the check must end $want_status ('${want_text%%:*}') on '$fixture'. It must end: $want_text${want_also:+, and its output must hold $want_also} ... It ended $status: $last"
 fi

@@ -43,26 +43,38 @@ PINNED_DOCKERFILES = [
 
 
 def _blocks() -> dict[str, str]:
-    """The config's `updates` entries by package ecosystem, with comments taken out."""
-    text = re.sub(r"^[ \t]*#.*$", "", CONFIG.read_text(), flags=re.M)
+    """The config's `updates` entries by package ecosystem, with comment lines taken out whole."""
+    text = re.sub(r"^[ \t]*#.*\n", "", CONFIG.read_text(), flags=re.M)
     parts = re.split(r"^  - package-ecosystem:[ \t]*", text, flags=re.M)[1:]
     return {part.split("\n", 1)[0].strip(): part for part in parts}
 
 
 def _directories(block: str) -> set[str]:
-    listed = re.search(r"^    directories:\n((?:      - .*\n)+)", block, re.M)
+    found = set()
+    lines = block.splitlines()
+    for number, line in enumerate(lines):
+        if line == "    directories:":
+            for item in lines[number + 1 :]:
+                if item.startswith("      - "):
+                    found.add(item[len("      - ") :].strip().strip("\"'"))
+                elif item.strip():
+                    break
     single = re.search(r"^    directory:[ \t]*(\S+)", block, re.M)
-    found = {line.split("- ", 1)[1].strip().strip("\"'") for line in listed.group(1).splitlines()} if listed else set()
     if single:
         found.add(single.group(1).strip("\"'"))
     return found
 
 
+# Not source: the repository's own metadata, other checkouts of it (linked worktrees live under
+# .claude/), the virtualenvs, and what the smoke scripts and pytest leave behind. Any other
+# dot-directory is walked: a Docker-based action's Dockerfile under .github/ is still a Dockerfile.
+NOT_SOURCE = {".git", ".claude", ".smoke-data", ".pytest_cache", "__pycache__", "node_modules"}
+
+
 def _dockerfile_directories() -> set[str]:
     found = set()
     for base, dirs, files in os.walk(ROOT):
-        # Linked worktrees, caches and the smoke scripts' data directories are all dot-directories.
-        dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]
+        dirs[:] = [d for d in dirs if d not in NOT_SOURCE and not d.startswith(".venv")]
         for name in files:
             if name == "Dockerfile" or name.startswith("Dockerfile."):
                 relative = Path(base).relative_to(ROOT).as_posix()
@@ -120,11 +132,15 @@ def test_every_dockerfile_is_under_a_docker_directories_entry():
 
 def test_the_docker_block_ignores_python_minor_and_major_moves():
     block = _blocks()["docker"]
-    ignore = re.search(r"^    ignore:\n((?:      .*\n)+)", block, re.M)
+    ignore = re.search(r"^    ignore:\n((?:      .*\n|[ \t]*\n)+)", block, re.M)
     assert ignore, "the docker block has no `ignore`"
-    assert "dependency-name: python" in ignore.group(1)
+    # The entry that names python, not the block as a whole: another package's entry that ignores
+    # major and minor moves must not stand in for it.
+    entries = [entry for entry in re.split(r"^      - ", ignore.group(1), flags=re.M) if entry.strip()]
+    python = [entry for entry in entries if re.match(r"dependency-name:\s*python\s*$", entry.splitlines()[0])]
+    assert len(python) == 1, f"the docker block's `ignore` has {len(python)} entries for python, not one"
     for kind in ("major", "minor"):
-        assert f"version-update:semver-{kind}" in ignore.group(1), (
+        assert f"version-update:semver-{kind}" in python[0], (
             f"python's semver-{kind} moves are not ignored, so Dependabot would propose another Python"
         )
 
