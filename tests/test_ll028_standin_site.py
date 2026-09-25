@@ -1,21 +1,24 @@
 """LL-028 -- the site half of the no-third-party check runs in CI against a stand-in site.
 
 CI's job `no-third-party-site` runs the whole check against tests/fixtures/standin-site, and then
-scripts/no-third-party-standin.sh three times, each with a deliberate defect in the stand-in that
+scripts/no-third-party-standin.sh four times, each with a deliberate fault in the stand-in that
 the check must catch. All of that needs Docker. What does not is pinned here, in the fast job:
 
 - the stand-in serves what each of its modes says it does, so a fixture cannot go red, or stay
   green, for a reason other than the one it names (the cut-short reply really is cut short, the
-  stalled one really is held open), and the server resolves no name (the check fails any DNS
-  query it captures);
+  stalled one really is held open, the `never-listens` one really binds nothing, and a mode that
+  serves is caught binding by the same harness), and the server resolves no name (the check fails
+  any DNS query it captures);
 - the stand-in's base image is pinned by the same digest as the service's (ADR-0017);
-- every defect mode of the stand-in (all but `none`, the clean site, which is the job's first
+- every fault mode of the stand-in (all but `none`, the clean site, which is the job's first
   step) has a fixture in the script and a step in ci.yml, and the site job runs the check without
   --api-only. Each comparison is between sets read out of a file, and an empty read must not look
   like agreement, so each one is asserted against the set it must be;
 - the script judges the check's exit status AND its last line, on a stand-in check that ends as
   told: it passes when the check ends the way the fixture requires, and not when the check says
-  `pass`, ends red in another way, or is blind for a reason that is not the fixture's.
+  `pass`, ends red in another way, or is blind for a reason that is not the fixture's. For
+  `never-listens` it also wants a line saying the `web` container is unhealthy, and for every
+  fixture a banner that names it.
 """
 
 from __future__ import annotations

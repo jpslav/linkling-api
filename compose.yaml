@@ -55,7 +55,8 @@ services:
       # probe uses the client the image has: wget (nginx:alpine), else python3 (the stand-in). An
       # image with neither reports unhealthy rather than ready. Any 2xx from `/` counts. Both go to
       # 127.0.0.1 inside the container, and nginx's logs are off (deploy/nginx-privacy.conf).
-      # Faster than the api's: nginx has no migrations to run before it listens.
+      # Faster than the api's: the api applies its migrations at startup
+      # (src/linkling/server/app.py, `lifespan`) and nginx has nothing to do before it listens.
       test:
         - CMD-SHELL
         - >-

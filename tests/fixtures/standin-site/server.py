@@ -7,7 +7,7 @@ not nginx, so the shipped `deploy/nginx-privacy.conf` (mounted by compose.yaml) 
 it says nothing about what the real pages contain.
 
 What it serves is fixed at build time by the one word in the `mode` file beside it, which the
-Dockerfile copies to /mode. `none` is the clean site. Each other mode is a deliberate defect that
+Dockerfile copies to /mode. `none` is the clean site. Each other mode is a deliberate fault that
 the check must catch, and scripts/no-third-party-standin.sh (run by CI) requires the check to end
 red on it, in the way named here:
 
@@ -19,12 +19,14 @@ red on it, in the way named here:
                        STALL_SECONDS pass. The check must be `blind` in its own time bound (curl's
                        --max-time, 5 s in CI), long before that. A check that had lost the bound
                        would end STALL_SECONDS later on a different message, which is red as well.
-  never-listens        the container runs and binds nothing (LL-029). It is not a defect in what the
-                       site serves but in whether it is up: compose.yaml's `web` healthcheck must
-                       keep `docker compose up --wait` from returning, so the check must be `blind`,
-                       "the stack never came up healthy", and its output must say `unhealthy`.
-                       Without the healthcheck, `--wait` returned as soon as the container was
-                       running, and the crawl then found nothing to talk to.
+  never-listens        the container runs and binds nothing (LL-029). Not a fault in what the site
+                       serves but in whether it is up: compose.yaml's `web` healthcheck must keep
+                       `docker compose up --wait` from returning, so the check must be `blind`,
+                       "the stack never came up healthy", with a line saying the web container is
+                       unhealthy. Measured with the healthcheck disabled: `--wait` returned once
+                       the container was running, and the check went on to end `blind: no answer
+                       from ... for / (the connection closed with no reply)`, which the script
+                       rejects, because it is not this fixture's `blind`.
 
 The server resolves no name and opens no connection of its own: the check captures every packet
 this container sends, and any DNS query fails it. `http.server` would look up its own host name

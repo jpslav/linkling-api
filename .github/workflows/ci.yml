@@ -93,9 +93,9 @@ jobs:
   # are `blind`. The stalled reply is what exercises the check's time bound: a check that had lost
   # it would wait for the stand-in's own backstop (STALL_SECONDS in its server.py) and end on a
   # different message, which the script counts as red. The last is a site that never listens
-  # (LL-029): `blind`, with `unhealthy` in the output, because compose.yaml's `web` healthcheck
-  # must keep `docker compose up --wait` from returning. The script also requires the check's
-  # banner to name the fixture. The steps that can wait have a bound of their own too, in case
+  # (LL-029): `blind`, with a line saying the `web` container is unhealthy, because compose.yaml's
+  # `web` healthcheck must keep `docker compose up --wait` from returning. The script also
+  # requires the check's banner to name the fixture. The steps that can wait have a bound of their own too, in case
   # the wait ever stopped ending.
   no-third-party-site:
     name: no-third-party-site

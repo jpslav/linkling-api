@@ -120,9 +120,10 @@ stylesheet on another origin (`fail`), a stylesheet reply that stops short or ne
 `docker compose up --wait` from returning). That shows the crawl runs, stops on its time bound and
 goes red. It says nothing about what `linkling-web` serves, and the stand-in is not nginx, so
 `deploy/nginx-privacy.conf` is not exercised either. Run it with the real site from a checkout that
-has `linkling-web` beside it. The first line of each run says which site it built and which defect,
-if any, was put in it (`site fixture none` for a real run, `site fixture cut-short-reply` under the
-wrapper), and separately which compose overlay `--mutate` layered in (`compose mutation none`).
+has `linkling-web` beside it. The first line of a whole-check run says which site it built and which
+defect, if any, was put in it (`site fixture none` for a real run, `site fixture cut-short-reply`
+under the wrapper), and separately which compose overlay `--mutate` layered in
+(`compose mutation none`); a `--api-only` run has no site to name and gives only the second.
 
 `docker compose up -d --wait` returns only once both services are answering: each has a
 healthcheck. `web`'s asks the site for `/` on port 80 with `wget` if its image has one (nginx's
@@ -136,11 +137,12 @@ base image (`python:3.12-slim`, pinned by digest in three Dockerfiles: the servi
 observer that `scripts/no-third-party-check.sh` builds, and the stand-in site's) go stale on their
 own: a security release reaches no deployer until someone re-locks and re-pins. Dependabot does
 that (`.github/dependabot.yml`, `docs/adr/0018-dependabot-refreshes-the-locks-and-digests.md`).
-Every Monday it opens at most two pull requests, each only when something moved: one for the
-lock files, and one that moves the three digests together. CI runs on
-them like on any pull request, and the image build in the `compose` and `no-third-party` jobs is
-what runs the websockets/wsproto guard (`scripts/no-forbidden-imports-check.sh`) against the new
-lock. A green one is merged; a red one is the exception to look at. Nothing is refreshed by hand.
+It is set to open, on Mondays, at most two pull requests, each only when something moved: one for
+the lock files, and one that moves the three digests together. CI's `pull_request` trigger
+(`.github/workflows/ci.yml`) covers them like any other pull request, and the image build in the
+`compose` and `no-third-party` jobs is what runs the websockets/wsproto guard
+(`scripts/no-forbidden-imports-check.sh`, called from the `Dockerfile`) against the new lock. A
+green one is merged; a red one is the exception to look at. Nobody has to re-lock or re-pin by hand.
 
 Two things make that work, and tests fail when either breaks. `requirements.lock.in` sits beside
 `requirements.lock.txt` and says what `pyproject.toml` says: that file is what makes Dependabot

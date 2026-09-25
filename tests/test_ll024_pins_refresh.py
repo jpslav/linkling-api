@@ -5,11 +5,12 @@ needs refreshing is left out of it.
 hold is what the config depends on and what would leave a pin outside it, or damage a lock, without
 anyone noticing (docs/adr/0018-dependabot-refreshes-the-locks-and-digests.md):
 
-- every Dockerfile in the tree is under a docker `directories` entry;
+- every Dockerfile in the repository is under a docker `directories` entry (the walk skips only the
+  checkout's own metadata, other checkouts of it, virtualenvs and tool caches: `NOT_SOURCE` below);
 - requirements.lock.txt has a requirements.lock.in beside it, which is what makes Dependabot
   re-resolve the whole set, and says what pyproject.toml says, because that list now lives in two
   places. requirements-build.lock.txt has NO `.in`: with one, Dependabot's pip-compile updater
-  returned the file with its pin gone (pip-tools files setuptools under "unsafe packages");
+  returned the file with its pin gone (where in the updater was not located; its header says more);
 - each lock still pins what it exists for, and every pin still carries a hash, so a refresh PR
   that empties or unhashes a lock fails here, in the `test` job, and not only in the image build;
 - the docker block ignores python's minor and major moves, so it refreshes the digest of the tag
