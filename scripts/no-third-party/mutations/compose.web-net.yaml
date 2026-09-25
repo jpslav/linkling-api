@@ -1,0 +1,5 @@
+# --mutate web-net: nginx copies every page request to an outside address (nginx-mirror.conf).
+services:
+  web:
+    volumes:
+      - ./scripts/no-third-party/mutations/nginx-mirror.conf:/etc/nginx/conf.d/default.conf:ro

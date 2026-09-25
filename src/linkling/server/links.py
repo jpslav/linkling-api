@@ -135,13 +135,15 @@ def create_generated(
     )
 
 
-def lookup(conn: sqlite3.Connection, name: str) -> Link | None:
-    """The link stored under ``name``, tombstone included, or None if there never was one.
+def is_expired(expires_at: str | None) -> bool:
+    """Whether a link with this ``expires_at`` is expired right now.
 
-    ``expired`` is decided here, against ``_now()``, rather than stored: a link is either
-    past its ``expires_at`` or it is not, at the moment it is looked up, and there is no
-    column to write it into. A link expiring at exactly ``_now()`` is expired:
-    ``expires_at`` is compared with ``<=``, not ``<``, matching RFC 7519 SS4.1.4's own
+    One definition, used by ``lookup`` and by the stats page, so the page marks a link
+    expired by the same rule a follow uses to answer it 410. Each call reads the clock
+    afresh, so a link can turn expired between one call and the next.
+
+    A link expiring at exactly ``_now()`` is expired: ``expires_at`` is compared with
+    ``<=``, not ``<``, matching RFC 7519 SS4.1.4's own
     ``exp`` claim -- "the expiration time on or after which the JWT MUST NOT be accepted"
     -- rather than RFC 6265 SS5.3's cookie, which reads the opposite way ("'expired' if the
     cookie has an expiry date in the past", so a cookie is still good exactly at its own
@@ -149,18 +151,26 @@ def lookup(conn: sqlite3.Connection, name: str) -> Link | None:
     lexicographically in time order, so the comparison below is a plain Python string
     compare against ``_now()`` -- no parsing, no SQL function.
     """
+    return expires_at is not None and expires_at <= _now()
+
+
+def lookup(conn: sqlite3.Connection, name: str) -> Link | None:
+    """The link stored under ``name``, tombstone included, or None if there never was one.
+
+    ``expired`` is decided here (``is_expired``, against ``_now()``) rather than stored: a
+    link is either past its ``expires_at`` or it is not, at the moment it is looked up, and
+    there is no column to write it into.
+    """
     row = conn.execute(
         "SELECT name, target, deleted_at, expires_at FROM links WHERE name = ?", (name,)
     ).fetchone()
     if row is None:
         return None
-    expires_at = row["expires_at"]
-    expired = expires_at is not None and expires_at <= _now()
     return Link(
         name=row["name"],
         target=row["target"],
         deleted=row["deleted_at"] is not None,
-        expired=expired,
+        expired=is_expired(row["expires_at"]),
     )
 
 

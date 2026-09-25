@@ -1,0 +1,52 @@
+# Layered over compose.yaml by scripts/no-third-party-check.sh, and by nothing else.
+#
+# Each service joins the network namespace of an observer that is already capturing, so the
+# capture covers the service from its first instruction, startup included. The services'
+# images, environment, volumes and nginx config are the shipped ones. What changes is which
+# container owns each network namespace, and so which one publishes the port: a container that
+# shares another's namespace cannot publish ports of its own.
+
+x-observer: &observer
+  build: ./scripts/no-third-party
+  image: ${COMPOSE_PROJECT_NAME:-linkling-no3p}-observer
+  entrypoint: ["observe", "${LINKLING_NO3P_CAPTURE_FILTER:-}"]
+  cap_add: [NET_RAW, NET_ADMIN]
+  # observe.sh ends in `sleep`, which as PID 1 would ignore the SIGTERM `down` sends.
+  init: true
+  healthcheck:
+    # tcpdump prints this once it is capturing. Until then the service must not start.
+    test: ["CMD", "grep", "-q", "listening on", "/cap/tcpdump.err"]
+    interval: 30s
+    start_period: 30s
+    start_interval: 1s
+
+services:
+  obs-api:
+    <<: *observer
+    ports:
+      # These, not compose.yaml's own (api/web publish none here -- see !reset [] below), are
+      # what actually publish a port for this run, since api/web share the observers' network
+      # namespaces. Same default as compose.yaml (ADR-0017 i, round-2 review): without this,
+      # every no-third-party-check.sh run -- CI on every PR, and any local run -- would publish
+      # on every interface regardless of LINKLING_BIND_ADDR, silently reopening what LL-021
+      # closes for the ordinary stack.
+      - "${LINKLING_BIND_ADDR:-127.0.0.1}:${LINKLING_PORT:-8000}:8000"
+
+  obs-web:
+    <<: *observer
+    ports:
+      - "${LINKLING_BIND_ADDR:-127.0.0.1}:${LINKLING_WEB_PORT:-8080}:80"
+
+  api:
+    network_mode: "service:obs-api"
+    ports: !reset []
+    depends_on:
+      obs-api:
+        condition: service_healthy
+
+  web:
+    network_mode: "service:obs-web"
+    ports: !reset []
+    depends_on:
+      obs-web:
+        condition: service_healthy

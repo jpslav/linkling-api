@@ -13,7 +13,10 @@
 | [0010](0010-ci-first-test-and-package-skeleton.md) | The first CI test asserts environment truth, not application behavior | Accepted |
 | [0011](0011-links-api-surface.md) | The links API surface: routes, methods, status codes and JSON field names | Accepted |
 | [0012](0012-asgi-server-uvicorn.md) | uvicorn is the ASGI server, and the only new runtime dependency | Accepted |
-| [0013](0013-expiry-request-format.md) | The create request's expiry value is an absolute ISO-8601 UTC timestamp, not a relative duration | Proposed |
-| [0014](0014-daily-counts-table-shape.md) | daily_counts is a WITHOUT ROWID table keyed by (link, UTC day), its counts die with their link by trigger, and a follow is counted by one guarded upsert | Proposed |
-| [0015](0015-compose-assembly.md) | How the compose file is assembled: the site's source, the service's user, logging, and origins | Proposed |
+| [0013](0013-expiry-request-format.md) | The create request's expiry value is an absolute ISO-8601 UTC timestamp, not a relative duration | Accepted |
+| [0014](0014-daily-counts-table-shape.md) | daily_counts is a WITHOUT ROWID table keyed by (link, UTC day), its counts die with their link by trigger, and a follow is counted by one guarded upsert | Accepted |
+| [0015](0015-compose-assembly.md) | How the compose file is assembled: the site's source, the service's user, logging, and origins | Accepted |
+| [0017](0017-loopback-bind-and-locked-image.md) | Loopback bind by default, and a locked, digest-pinned image | Accepted |
+| [0018](0018-dependabot-refreshes-the-locks-and-digests.md) | Dependabot refreshes the locks and base-image digests, with a .in file as the main lock's input | Accepted |
+| [0019](0019-ci-tests-the-locks-and-pins-its-actions.md) | CI runs pytest against the hash-locked environment, and pins its actions by commit SHA | Accepted |
 <!-- adr-index:end -->

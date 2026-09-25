@@ -15,7 +15,9 @@ services:
       # can see and back up, and `docker compose down -v` does not touch it.
       - ${LINKLING_DATA_DIR:-./data}:/data
     ports:
-      - "${LINKLING_PORT:-8000}:8000"
+      # Loopback by default (ADR-0017): reachable only from this host until a deployer opts
+      # in with LINKLING_BIND_ADDR, so a TLS proxy in front cannot be bypassed on the raw port.
+      - "${LINKLING_BIND_ADDR:-127.0.0.1}:${LINKLING_PORT:-8000}:8000"
     restart: unless-stopped
     healthcheck:
       # There is no health route yet. Nothing answers GET on /-/api/links, so the app's
@@ -43,5 +45,25 @@ services:
     volumes:
       - ./deploy/nginx-privacy.conf:/etc/nginx/conf.d/00-privacy.conf:ro
     ports:
-      - "${LINKLING_WEB_PORT:-8080}:80"
+      # Same default as the api service, and the same variable (ADR-0017 i): a deployer
+      # fronting one origin with a proxy is fronting both.
+      - "${LINKLING_BIND_ADDR:-127.0.0.1}:${LINKLING_WEB_PORT:-8080}:80"
     restart: unless-stopped
+    healthcheck:
+      # `docker compose up --wait` waits for this, so `web` is ready once it answers and not merely
+      # once it is running (LL-029). The image is linkling-web's, or in CI a python stand-in, so the
+      # probe uses the client the image has: wget (nginx:alpine), else python3 (the stand-in). An
+      # image with neither reports unhealthy rather than ready. Any 2xx from `/` counts. Both go to
+      # 127.0.0.1 inside the container, and nginx's logs are off (deploy/nginx-privacy.conf).
+      # Faster than the api's: the api applies its migrations at startup
+      # (src/linkling/server/app.py, `lifespan`) and nginx has nothing to do before it listens.
+      test:
+        - CMD-SHELL
+        - >-
+          wget -q -O /dev/null http://127.0.0.1:80/ 2>/dev/null
+          || python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+      start_interval: 1s

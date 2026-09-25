@@ -1,0 +1,17 @@
+# ADR-0017 ii, round-2 review fix: pyproject.toml's [build-system] requires ("setuptools>=68")
+# is not covered by requirements.lock.txt or --require-hashes on it -- pip's PEP-517 build
+# isolation fetches the build backend itself, unhashed, into a temp env unless it is already
+# installed and --no-build-isolation is passed (Dockerfile). Locked here so that fetch is
+# hash-verified too, matching pip's expected constraint syntax (`echo "name>=X" | uv pip
+# compile - ...`, not a real file, since there is nothing else to point it at):
+#    echo "setuptools>=68" | uv pip compile - --generate-hashes -o requirements-build.lock.txt
+# There is deliberately no requirements-build.lock.in beside it (LL-024, ADR-0018), unlike
+# requirements.lock.txt. With one, Dependabot hands this file to its pip-compile updater, which was
+# measured returning it as its header alone, the pin gone. pip-compile run by hand with the same
+# flags keeps the pin (pip-tools files setuptools under "unsafe packages"), so the loss is in the
+# updater and where was not located. Without a `.in`, Dependabot bumps the pin and its hashes
+# itself, and setuptools has no dependencies (`pip show setuptools`: Requires is empty) to keep
+# consistent with. tests/test_ll024_pins_refresh.py fails if a requirements-build.lock.in appears.
+setuptools==84.0.0 \
+    --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670 \
+    --hash=sha256:f4695c21257f0d9b537ec2692c941d02ee143b7cc1276941349a546573b2ef73

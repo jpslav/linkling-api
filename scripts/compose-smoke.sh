@@ -8,6 +8,9 @@
 # already running from this checkout, nor that stack's database:
 #   LINKLING_SMOKE_PROJECT  compose project name   (default linkling-smoke)
 #   LINKLING_SMOKE_PORT     host port for the api  (default 18000)
+#   LINKLING_SMOKE_MAX_TIME seconds one whole request may take, curl's --max-time (default 10):
+#                           a service that accepts a connection and never answers is `blind`
+#                           after this long, not a hang
 # The data directory is a fresh .smoke-data/run-<random>/, which is left behind afterwards:
 # on Linux it ends up owned by the container's uid, and removing it is not this script's to
 # risk. The team key is random per run and never printed.
@@ -31,17 +34,44 @@ docker info >/dev/null 2>&1 || blind "the docker daemon is not reachable"
 
 rand() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
 
+# shellcheck source=lib/port-check.sh
+. scripts/lib/port-check.sh
+
 project="${LINKLING_SMOKE_PROJECT:-linkling-smoke}"
 port="${LINKLING_SMOKE_PORT:-18000}"
+# curl's --max-time for every request to the service. In one measurement (30 creates and 30
+# follows against the api container on Docker Desktop, over loopback) a request took 4 ms on
+# average and 18.5 ms at the slowest, so 10 s is over five hundred times what a healthy one
+# needed, room for a loaded CI runner, and still far below a CI job's own timeout, which is what
+# a silent service used to run into. `--max-time 0` means no limit at all, so a limit that is
+# not a whole number above 0 is refused rather than passed on.
+max_time="${LINKLING_SMOKE_MAX_TIME:-10}"
+case "$max_time" in
+    ""|*[!0-9]*) blind "LINKLING_SMOKE_MAX_TIME must be a whole number of seconds above 0, not '$max_time'" ;;
+esac
+[ "$max_time" -ge 1 ] || blind "LINKLING_SMOKE_MAX_TIME must be a whole number of seconds above 0, not '$max_time'"
 data="$PWD/.smoke-data/run-$(rand 6)"
 canary="smoke-$(rand 8)"
 target="https://example.com/linkling-smoke/$canary?q=1"
 base="http://127.0.0.1:$port"
 
-# Exported, so that they override anything in a .env beside compose.yaml.
+if port_free "$port"; then
+    :
+else
+    case $? in
+        1) fail "port $port is already in use (set LINKLING_SMOKE_PORT to use another)" ;;
+        *) blind "could not tell whether port $port is free: $PORT_CHECK_MSG" ;;
+    esac
+fi
+
+# Exported, so that they override anything in a .env beside compose.yaml. LINKLING_BIND_ADDR
+# (round-3 review) matters here too: port_free() and $base above both hardcode 127.0.0.1, so
+# a stray LINKLING_BIND_ADDR in a developer's own .env -- unrelated to this script, left over
+# from their own deployment work -- must not reach this run's compose stack.
 export LINKLING_API_KEY="$(rand 24)"
 export LINKLING_DATA_DIR="$data"
 export LINKLING_PORT="$port"
+export LINKLING_BIND_ADDR=127.0.0.1
 
 dc() { docker compose -p "$project" "$@"; }
 
@@ -64,10 +94,33 @@ start() {
     fi
 }
 
-# Follows the canary once and prints "<status> <Location>".
-follow() {
-    curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "$base/$canary"
+# Asks the service one question and leaves what curl's -w format printed in $answer:
+# ask <step> <-w format> <curl args...>. A stack that stops answering mid-run is `blind`, said
+# here with curl's reason, not curl's own exit status ending the run under `set -e` (LL-023),
+# and one that never answers is `blind` after $max_time seconds (LL-025), not after CI's own
+# timeout. What curl printed decides it: curl prints 000 when no HTTP status came back. The exit
+# status only names the reason, and nothing overwrites $answer when it is non-zero, because a
+# status curl did print survives a non-zero exit (a body cut short, say) and `|| answer=000`
+# would have discarded it.
+ask() {
+    local step="$1" fmt="$2" rc why
+    shift 2
+    if answer="$(curl -s --max-time "$max_time" -o /dev/null -w "$fmt" "$@")"; then rc=0; else rc=$?; fi
+    case "$answer" in
+        ""|000*)
+            case "$rc" in
+                7) why="curl could not connect" ;;
+                28) why="curl timed out after ${max_time}s" ;;
+                52) why="the connection closed with no reply" ;;
+                56) why="receiving the reply failed" ;;
+                *) why="curl exit status $rc" ;;
+            esac
+            blind "no answer from $base while $step ($why), so the run went no further" ;;
+    esac
 }
+
+# Follows the canary once and leaves "<status> <Location>" in $answer.
+follow() { ask "following the canary $1" '%{http_code} %{redirect_url}' "$base/$canary"; }
 
 # The service's logs must show that it started (so an empty log cannot pass as a clean one),
 # and must not mention the canary's path or any IPv4 address except the 0.0.0.0 it binds.
@@ -88,12 +141,14 @@ mkdir -p "$(dirname "$data")"
 
 start "first start"
 
-status="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/-/api/links" \
+ask "creating the canary link" '%{http_code}' -X POST "$base/-/api/links" \
     -H "Authorization: Bearer $LINKLING_API_KEY" -H 'Content-Type: application/json' \
-    -d "{\"url\": \"$target\", \"name\": \"$canary\"}")"
+    -d "{\"url\": \"$target\", \"name\": \"$canary\"}"
+status="$answer"
 [ "$status" = 201 ] || fail "creating the canary link answered $status, not 201"
 
-got="$(follow)"
+follow "before the restart"
+got="$answer"
 [ "$got" = "302 $target" ] || fail "the first follow gave '$got', not '302 $target'"
 echo "follow before restart: $got"
 
@@ -115,7 +170,8 @@ check_logs "before restart"
 dc down >/dev/null 2>&1 || fail "docker compose down failed"
 start "after down and up"
 
-got="$(follow)"
+follow "after down and up"
+got="$answer"
 [ "$got" = "302 $target" ] || fail "after down and up the follow gave '$got', not '302 $target'"
 echo "follow after restart:  $got"
 

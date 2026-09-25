@@ -5,16 +5,30 @@ on:
   push:
     branches: [main]
 
+# Every action is pinned by commit SHA, with the tag it was resolved from beside it; the
+# `github-actions` block of .github/dependabot.yml is set to open the PR that moves a pin (LL-030,
+# ADR-0019).
+
 jobs:
+  # pytest runs in the environment the image ships plus the test-only packages, installed under
+  # --require-hashes (LL-030, ADR-0019), not in whatever pyproject.toml's ranges resolve to today.
+  # One pip run takes the three locks, as the Dockerfile's takes its two: requirements.lock.txt is
+  # the shipped set and goes first, because given one version at two sets of hashes pip enforces
+  # the first file's; requirements-test.lock.txt adds pytest and httpx and repeats the shipped set,
+  # so pip refuses the pair if they name two versions of one package, and
+  # tests/test_ll030_locked_ci.py holds that their hashes agree; requirements-build.lock.txt is the
+  # build backend, which is what lets the package install below use --no-build-isolation and fetch
+  # nothing unhashed.
   test:
     name: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: pip install -e ".[test]"
+      - run: pip install --require-hashes -r requirements.lock.txt -r requirements-test.lock.txt -r requirements-build.lock.txt
+      - run: pip install --no-deps --no-build-isolation -e .
       - run: pytest -q
 
   # The compose stack's service, started from nothing on Linux: it answers, a link survives
@@ -25,5 +39,97 @@ jobs:
     name: compose
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/compose-smoke.sh
+
+  # The service sends nothing to anyone but the client (ADR-0009, scripts/no-third-party-check.sh).
+  # Only the service: the site needs the private linkling-web checkout, which this workflow's
+  # token cannot fetch (ADR-0015). The job `no-third-party-site` below runs the site half of the
+  # check against a stand-in for it. The second step is the red that makes the first one mean
+  # something: a service that fetches each link's target on create must fail, naming the lookup.
+  # The third is the same for the stats page's markup: one that names a third-party stylesheet
+  # must fail, naming the host.
+  no-third-party:
+    name: no-third-party
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: scripts/no-third-party-check.sh --api-only
+      - name: the check fails a service that fetches its target on create
+        run: |
+          set +e
+          out="$(scripts/no-third-party-check.sh --api-only --mutate api 2>&1)"
+          status=$?
+          echo "$out"
+          [ "$status" = 1 ] && grep -q "including a lookup of the link's target host" <<<"$out"
+      - name: the check fails a service whose stats page loads from a third party
+        run: |
+          set +e
+          out="$(scripts/no-third-party-check.sh --api-only --mutate api-page 2>&1)"
+          status=$?
+          echo "$out"
+          [ "$status" = 1 ] && grep -q "fonts.googleapis.com" <<<"$out"
+
+  # LL-022: websockets/wsproto must not become importable (ADR-0017 ii) -- either one makes
+  # uvicorn log a rejected WebSocket's client address to its error logger, which
+  # --no-access-log does not touch. The Dockerfile also runs this same script as a build step,
+  # so a real image with the leak fails to build; this job is the fast, no-rebuild copy that
+  # keeps the red path exercised on every PR, mirroring no-third-party's --mutate step above.
+  # It looks at the set the image ships, installed the way the Dockerfile installs it (LL-030): the
+  # two locks under --require-hashes, then the package with no dependencies of its own. It does
+  # not need pytest, so requirements-test.lock.txt is not part of it.
+  no-forbidden-imports:
+    name: no-forbidden-imports
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: pip install --require-hashes -r requirements.lock.txt -r requirements-build.lock.txt
+      - run: pip install --no-deps --no-build-isolation .
+      - run: scripts/no-forbidden-imports-check.sh
+      - name: the check fails when a forbidden dependency is importable
+        run: |
+          set +e
+          pip install --no-cache-dir websockets >/dev/null
+          out="$(scripts/no-forbidden-imports-check.sh 2>&1)"
+          status=$?
+          echo "$out"
+          [ "$status" = 1 ] && grep -q "websockets" <<<"$out"
+
+  # LL-028: the site half of the no-third-party check, run in full (no --api-only) on every
+  # build. The real site is the private linkling-web, which this workflow's token cannot fetch
+  # (ADR-0015), so it runs against a stand-in checked into this repo: tests/fixtures/standin-site,
+  # whose server.py says what it is. That shows the crawl runs, and that it goes red when it
+  # should. It is not a check of the real site: the pages linkling-web serves, its nginx and the
+  # deploy/nginx-privacy.conf mounted into it are not exercised here.
+  # The first step is the check itself and must pass. Each step after it puts one deliberate
+  # defect in the stand-in (scripts/no-third-party-standin.sh) and requires the check to end red
+  # in the way that defect must turn it, judged by its last line as well as its exit status:
+  # an external stylesheet is a `fail`; a stylesheet reply cut short, and one that never ends,
+  # are `blind`. The stalled reply is what exercises the check's time bound: a check that had lost
+  # it would wait for the stand-in's own backstop (STALL_SECONDS in its server.py) and end on a
+  # different message, which the script counts as red. The last is a site that never listens
+  # (LL-029): `blind`, with a line saying the `web` container is unhealthy, because compose.yaml's
+  # `web` healthcheck must keep `docker compose up --wait` from returning. The script also
+  # requires the check's banner to name the fixture. The steps that can wait have a bound of their own too, in case
+  # the wait ever stopped ending.
+  no-third-party-site:
+    name: no-third-party-site
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: the whole check passes against the stand-in site
+        run: LINKLING_WEB_DIR=tests/fixtures/standin-site scripts/no-third-party-check.sh
+      - name: the check fails a site that loads an external stylesheet
+        run: scripts/no-third-party-standin.sh external-stylesheet
+      - name: the check is blind, not clean, when a reply is cut short
+        run: scripts/no-third-party-standin.sh cut-short-reply
+      - name: the check is blind, not hung, when a reply never ends
+        timeout-minutes: 5
+        run: scripts/no-third-party-standin.sh stalled-reply
+      - name: the stack is not ready while the site never listens
+        timeout-minutes: 5
+        run: scripts/no-third-party-standin.sh never-listens

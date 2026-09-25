@@ -1,0 +1,6 @@
+# --mutate api: every create also fetches the link's target, behind the usual guard against
+# reserved addresses (sitecustomize.py).
+services:
+  api:
+    volumes:
+      - ./scripts/no-third-party/mutations/sitecustomize.py:/usr/local/lib/python3.12/site-packages/sitecustomize.py:ro

@@ -13,18 +13,27 @@ notices when they stop — see `docs/adr/0007-compose-topology.md`.
 ## What exists today
 
 Creating a link (with a name you choose or one the service invents, optionally given an
-expiry), following it, and deleting it. Every redirect adds one to that link's count for
-the current UTC day, and that per-link per-day number is all the service's tables hold
-about a click (`docs/adr/0004`, `0014`); deleting a link deletes its counts. The stats page and the
-CLI that read the counts are separate pieces of work and are not here yet.
+expiry), following it, deleting it, and a page that lists every link with its counts. Every
+redirect adds one to that link's count for the current UTC day, and that per-link per-day
+number is all the service's tables hold about a click (`docs/adr/0004`, `0014`); deleting a
+link deletes its counts. The CLI is a separate piece of work and is not here yet.
 
 | | |
 |---|---|
 | `POST /-/api/links` | `{"url": …, "name": …?, "created_by": …?, "expires": …?}` → `201 {"name", "url"}`. Needs the team key. |
 | `DELETE /-/api/links/<name>` | `204`. Needs the team key. A deleted name stays reserved forever. |
 | `GET\|HEAD /<name>` | `302` to the long URL with `Cache-Control: no-store`. No credential, no cookie. |
+| `GET /-/api/links/<name>/stats` | `200 {"days": {"YYYY-MM-DD": count}}`: that link's count for each UTC day it was followed, and no row for a day nobody followed it. Needs the team key. `404` never existed, `410` deleted; an expired link answers `200` with the counts it kept. Reading it does not count as a follow. |
+| `GET /-/stats` | A plain HTML page: every link that has not been deleted, and its count for each UTC day. Needs the team key over HTTP Basic. |
 
-Unknown names answer `404`; deleted or expired ones, `410`; and every response the
+`/-/stats` is opened in a browser, so it takes HTTP Basic rather than the Bearer header the
+API uses (`docs/adr/0006`): any user name without a colon in it, and the team key as the password. It lists every
+link that has not been deleted, by name, with its target and its day-by-day counts, newest
+day first. A link that has expired is listed and marked, and keeps its counts; a deleted
+link is not listed, because its target and its counts went when it was deleted. Opening
+the page does not count as a follow.
+
+Following an unknown name answers `404`, and a deleted or expired one `410`; and every response the
 application produces carries `Cache-Control: no-store` — a 500 from the framework's own
 error handler is the one exception, and 500 is not a cacheable status. `expires` is an
 ISO-8601 UTC timestamp strictly in the future, shaped like `2026-01-01T00:00:00Z`
@@ -52,6 +61,7 @@ docker compose up -d
 | `LINKLING_PORT` | `8000` | the service's host port: short links and the API |
 | `LINKLING_WEB_PORT` | `8080` | the public site's host port |
 | `LINKLING_WEB_DIR` | `../linkling-web` | the site's checkout |
+| `LINKLING_BIND_ADDR` | `127.0.0.1` | which interface both ports bind to |
 
 Each can go in the shell's environment or in `.env`. Inside the container the database is
 always `/data/linkling.db`. **`LINKLING_PUBLIC_URL`** is the host every short link is
@@ -69,10 +79,88 @@ and some proxies log every client's address by default. nginx does, which is why
 container needs that file. Turn your proxy's access log off, and keep client addresses out
 of its error log too. Otherwise the privacy promise stops being true at your front door.
 
+**Both ports bind to `127.0.0.1` by default, so nothing is reachable from off this host until
+you opt in** (`docs/adr/0017`). This is deliberate: a TLS proxy in front only protects you if
+the raw port cannot also be reached directly, and the raw port carries the team key
+(`LINKLING_API_KEY`) in cleartext. If you are not putting a proxy in front — a LAN-only box,
+say — set `LINKLING_BIND_ADDR=0.0.0.0` (or a specific interface's address) to publish both
+ports everywhere.
+
 `scripts/compose-smoke.sh` checks a stack started from nothing. It confirms that the service
 answers, that a link survives `docker compose down` and `up`, that the backup below is sound,
 and that the logs hold no client address. It uses its own project, port and data directory,
 so it does not touch a stack you already run. CI runs it on every pull request.
+
+`scripts/no-third-party-check.sh` shows that the stack sends nothing to anyone but the client
+(`docs/adr/0009-third-party-services.md`). It captures every packet the service and the site
+send, from before either one starts, while it creates a link, follows it, opens the stats page
+and reads the link's counts, each with and without the team key, deletes the link, reads its
+counts again, and loads the site. Anything but a reply to
+its own requests fails the run, and so does any DNS lookup. Each run also plants a connection
+and a lookup of its own, and a capture that misses them is reported blind rather than clean.
+It also fetches the site's pages and every stylesheet they pull in, and fails on any
+absolute URL, `<script>` or inline event handler in what they serve. The service's own stats
+page prints each link's target as text, so it is read as HTML instead
+(`scripts/no-third-party/loads.py`, whose docstring says what it flags and what it does not
+model): it fails on markup that names another origin or runs script (a `<script>`, an inline
+event handler, another origin's URL in a `src`, in an `href` other than a link's, or in CSS),
+not on a target shown as text.
+A request that gets no answer within 10 seconds (`LINKLING_SMOKE_MAX_TIME` and
+`LINKLING_NO3P_MAX_TIME` change that) ends either script as blind, naming what it was asking
+for, rather than waiting for CI's own timeout.
+It cannot see routes it does not exercise, anything after the run ends, what a browser does
+with the pages, what the host does outside the containers, or a proxy you put in front. CI
+runs it with `--api-only`, because CI cannot fetch `linkling-web`, and runs it again with a
+deliberate leak to show that it goes red, and again with a stats page that names a third-party
+stylesheet. A second CI job runs the whole check, site included, against a small stand-in for the
+site (`tests/fixtures/standin-site`, named with `LINKLING_WEB_DIR`), and then against four copies of
+it that each carry one defect the check must catch (`scripts/no-third-party-standin.sh`): a
+stylesheet on another origin (`fail`), a stylesheet reply that stops short or never ends
+(`blind`), and a site that never listens (`blind`, because the `web` healthcheck below keeps
+`docker compose up --wait` from returning). That shows the crawl runs, stops on its time bound and
+goes red. It says nothing about what `linkling-web` serves, and the stand-in is not nginx, so
+`deploy/nginx-privacy.conf` is not exercised either. Run it with the real site from a checkout that
+has `linkling-web` beside it. The first line of a whole-check run says which site it built and which
+defect, if any, was put in it (`site fixture none` for a real run, `site fixture cut-short-reply`
+under the wrapper), and separately which compose overlay `--mutate` layered in
+(`compose mutation none`); a `--api-only` run has no site to name and gives only the second.
+
+`docker compose up -d --wait` returns only once both services are answering: each has a
+healthcheck. `web`'s asks the site for `/` on port 80 with `wget` if its image has one (nginx's
+does) and `python3` if not (the stand-in's does), so an image with neither reports unhealthy
+instead of ready.
+
+### Keeping the pins fresh
+
+The image's Python dependencies (`requirements.lock.txt` and `requirements-build.lock.txt`), the
+test environment's (`requirements-test.lock.txt`), its base image (`python:3.12-slim`, pinned by
+digest in three Dockerfiles: the service's, the observer that `scripts/no-third-party-check.sh`
+builds, and the stand-in site's) and the GitHub Actions in `.github/workflows` (pinned by commit
+SHA) go stale on their own: a security release reaches no deployer until someone re-locks and
+re-pins. Dependabot does that (`.github/dependabot.yml`,
+`docs/adr/0018-dependabot-refreshes-the-locks-and-digests.md`,
+`docs/adr/0019-ci-tests-the-locks-and-pins-its-actions.md`). It is set to open, on Mondays, at most
+three pull requests, each only when something moved: one for the lock files, one that moves the three
+digests together, and one for the actions. CI's `pull_request` trigger (`.github/workflows/ci.yml`)
+covers them like any other pull request. The `test` job runs pytest in an environment installed from
+the locks under `pip install --require-hashes`, so a lock PR is exercised by the test suite and not
+only by the image build. The websockets/wsproto guard (`scripts/no-forbidden-imports-check.sh`)
+runs against the new lock in the image build of the `compose` and `no-third-party` jobs (it is called
+from the `Dockerfile`) and in the `no-forbidden-imports` job. A green one is merged; a red one is the exception to look at. Nobody has to
+re-lock or re-pin by hand.
+
+Two things make that work, and tests fail when either breaks. `requirements.lock.in` and
+`requirements-test.lock.in` sit beside their `.txt` and say what `pyproject.toml` says (the
+dependencies, and the dependencies plus the `test` extra): those files are what make Dependabot
+re-resolve the whole set instead of bumping one pinned line at a time, which leaves pins that
+cannot be installed together. (`requirements-build.lock.txt` has no such file on purpose; its
+header says why.) And every Dockerfile is listed in the config. Other tests fail if a refresh PR
+leaves a lock without the pins it exists for, or a pin without its hashes, if the test lock names
+another version or hash of anything the image lock pins, or if a workflow's `uses:` is not a commit
+SHA with its tag beside it. Dependabot is held to the `3.12-slim` tag: it refreshes that tag's
+digest and never proposes another Python. To re-lock by hand, use the command at the top of each
+lock file, and re-lock the test lock after the image lock: its command takes the image lock as a
+constraint, and the two must agree.
 
 ### Where the database lives
 
@@ -156,6 +244,7 @@ curl -sf -X POST http://127.0.0.1:8000/-/api/links \
   -d '{"url":"https://example.com/a/very/long/tracking/url","name":"q3-plan"}'
 
 curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' http://127.0.0.1:8000/q3-plan
+curl -sf -u ":$LINKLING_API_KEY" http://127.0.0.1:8000/-/stats | grep q3-plan   # or open it in a browser
 curl -sf -X DELETE http://127.0.0.1:8000/-/api/links/q3-plan \
   -H "Authorization: Bearer $LINKLING_API_KEY"
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/q3-plan   # 410
