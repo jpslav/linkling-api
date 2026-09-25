@@ -86,12 +86,24 @@ def test_the_real_site_is_read_with_no_credential():
     assert not re.search(r"^\s+(?:token|ssh-key|ssh-known-hosts|ssh-user):", step, re.M), (
         "the real-site checkout passes a credential; linkling-web is public and needs none"
     )
+    # The action's own token would otherwise stay configured in linkling-web/.git, which is the
+    # web image's build context, and nothing after the checkout fetches or pushes.
+    assert re.search(r"^\s+persist-credentials: false$", step, re.M), "the real-site checkout persists credentials"
     workflows = sorted(WORKFLOWS.glob("*.y*ml"))
     assert CI in workflows, "the walk found no ci.yml"
     for workflow in workflows:
         text = workflow.read_text()
-        assert not re.search(r"\$\{\{\s*secrets\.", text), f"{workflow.name} reads a secret"
+        code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+        assert not re.search(r"\bsecrets\b", code), f"{workflow.name} refers to secrets"
         assert "DEPLOY_KEY" not in text, f"{workflow.name} names a deploy key"
+
+
+def test_nothing_in_the_site_job_can_turn_a_step_into_a_no_op():
+    # An `if:` that is false, `continue-on-error`, or a `working-directory` that moves the check
+    # would leave the job green with the real site unchecked. None of them is in the job today, so
+    # a later one has to be argued for here.
+    found = re.findall(r"^\s+(?:if|continue-on-error|working-directory):.*$", _site_job(), re.M)
+    assert not found, f"the site job carries {found}, which can make a step, or the job, a green no-op"
 
 
 # --- the step that runs the check against it -----------------------------------------------------
@@ -110,6 +122,8 @@ def test_the_check_runs_against_the_directory_the_checkout_writes_to_after_the_s
     assert standin, "the walk found no stand-in steps"
     assert runs[0] > max(standin), "the real-site check comes before a stand-in step, so a red there is not the site's"
     assert "--api-only" not in steps[runs[0]], "the real-site check is --api-only, which skips the site"
+    blind = [i for i, s in enumerate(steps) if "no-third-party-check.sh" in s and "\n        run: |\n" in s]
+    assert len(blind) == 1 and blind[0] > runs[0], "the blind arm does not run after the real-site check"
 
 
 # --- the step that runs the check's blind arm ----------------------------------------------------
@@ -128,6 +142,15 @@ FAKE_CHECK = """#!/usr/bin/env bash
 case "$FAKE_MODE" in
     blind) echo "blind: no linkling-web checkout at $LINKLING_WEB_DIR, so the site cannot be checked (--api-only checks the service alone)" >&2; exit 2 ;;
     blind-elsewhere) echo "blind: no linkling-web checkout at /somewhere/else, so the site cannot be checked" >&2; exit 2 ;;
+    wrong-for-the-empty-dir)
+        if [ -d "$LINKLING_WEB_DIR" ]; then echo "blind: the stack never came up healthy" >&2; exit 2; fi
+        echo "blind: no linkling-web checkout at $LINKLING_WEB_DIR, so the site cannot be checked" >&2; exit 2 ;;
+    wrong-for-the-absent-dir)
+        if [ ! -d "$LINKLING_WEB_DIR" ]; then echo "blind: the stack never came up healthy" >&2; exit 2; fi
+        echo "blind: no linkling-web checkout at $LINKLING_WEB_DIR, so the site cannot be checked" >&2; exit 2 ;;
+    passes-the-empty-dir)
+        if [ -d "$LINKLING_WEB_DIR" ]; then echo "pass"; exit 0; fi
+        echo "blind: no linkling-web checkout at $LINKLING_WEB_DIR, so the site cannot be checked" >&2; exit 2 ;;
     blind-words-exit-0) echo "blind: no linkling-web checkout at $LINKLING_WEB_DIR, so the site cannot be checked (--api-only checks the service alone)" >&2; exit 0 ;;
     blind-words-exit-1) echo "blind: no linkling-web checkout at $LINKLING_WEB_DIR, so the site cannot be checked (--api-only checks the service alone)" >&2; exit 1 ;;
     blind-other-reason) echo "blind: the stack never came up healthy, so nothing was exercised" >&2; exit 2 ;;
@@ -177,7 +200,18 @@ def test_the_blind_step_passes_when_the_check_is_blind_about_each_directory_it_i
 
 
 @pytest.mark.parametrize(
-    "mode", ["pass", "fail", "blind-elsewhere", "blind-other-reason", "blind-words-exit-0", "blind-words-exit-1"]
+    "mode",
+    [
+        "pass",
+        "fail",
+        "blind-elsewhere",
+        "blind-other-reason",
+        "blind-words-exit-0",
+        "blind-words-exit-1",
+        "wrong-for-the-empty-dir",
+        "wrong-for-the-absent-dir",
+        "passes-the-empty-dir",
+    ],
 )
 def test_the_blind_step_is_red_when_the_check_is_not_blind_about_the_directory_it_was_given(tree, mode):
     done, record = _run_step(tree, mode)

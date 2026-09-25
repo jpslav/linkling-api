@@ -135,6 +135,7 @@ jobs:
           repository: jpslav/linkling-web
           ref: main
           path: linkling-web
+          persist-credentials: false
       - name: the whole check passes against the stand-in site
         run: LINKLING_WEB_DIR=tests/fixtures/standin-site scripts/no-third-party-check.sh
       - name: the check fails a site that loads an external stylesheet
