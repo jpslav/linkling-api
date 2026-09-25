@@ -75,7 +75,7 @@ which did not functionally exist when it was written. This item leaves a tombsto
 implication whether ADR-0005's "a tombstone stores only a name and a date" should now read
 as "and its dates."
 
-> ⚠️ **Added 2026-09-25 (LL-015).** ADR-0020 now answers this question (Proposed): a tombstone
+> ⚠️ **Added 2026-09-25 (LL-015).** ADR-0020 (Accepted 2026-09-25) now answers this question: a tombstone
 > keeps `expires_at`. The privacy manifest declares `links.expires_at` with
 > `on_delete: "kept"`, and `tests/test_ll015_privacy_manifest.py` enforces that claim.
 

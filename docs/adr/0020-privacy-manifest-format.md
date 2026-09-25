@@ -1,7 +1,7 @@
 # ADR-0020 — The privacy manifest ships as package data, in a format whose retention claims a test enforces
 
-- Status: Proposed
-- Approver: (pending)
+- Status: Accepted
+- Approver: pm-4, under the owner's delegation of 2026-09-22
 - Date: 2026-09-25
 
 ## Context
@@ -142,6 +142,12 @@ repository. This ADR answers neither.
   what the service stores and can read back through SQL, table by table. It says nothing either
   way about freed pages or the order of cells in a page.
 
+> ⚠️ **Added 2026-09-25, when this ADR was accepted.** The owner answered both questions the
+> same day (`products/linkling/STAKEHOLDER-QUEUE.md` in the program repo). A deleted link's
+> target stays the empty string, which is what the manifest already says. And "Privacy promises
+> should be real": the database file itself must hold nothing finer than a day about a click.
+> That work is LL-033. The manifest makes no raw-bytes claim, so neither answer changes it.
+
 ## Consequences
 
 - The field names above are a contract with `demo.sh` (LL-008) and the privacy page (LL-012).
@@ -151,3 +157,12 @@ repository. This ADR answers neither.
   `scripts/no-third-party-check.sh` exercises the route.
 - A column added or removed without the same change to the manifest cannot pass CI. Nor can
   a change to what deleting or expiring a link does to a column.
+
+## Decision record
+
+Accepted 2026-09-25 by `pm-4`, the program manager, under the 2026-09-22 ruling in
+`company/DECISIONS.md` of the program repo ("What reaches the owner is user-visible impact, not
+cost to undo"). This ADR fixes a file's format and its location in the package, which is below
+the owner's line. Proposed earlier the same day by the `w-LL-015` session in
+jpslav/linkling-api#11. The manifest's wording is a separate matter: the program manager puts
+it in front of the owner to read before the first deployment.
