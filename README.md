@@ -110,17 +110,23 @@ A request that gets no answer within 10 seconds (`LINKLING_SMOKE_MAX_TIME` and
 for, rather than waiting for CI's own timeout.
 It cannot see routes it does not exercise, anything after the run ends, what a browser does
 with the pages, what the host does outside the containers, or a proxy you put in front. CI
-runs it with `--api-only`, because CI cannot fetch `linkling-web`, and runs it again with a
-deliberate leak to show that it goes red, and again with a stats page that names a third-party
-stylesheet. A second CI job runs the whole check, site included, against a small stand-in for the
-site (`tests/fixtures/standin-site`, named with `LINKLING_WEB_DIR`), and then against four copies of
-it that each carry one defect the check must catch (`scripts/no-third-party-standin.sh`): a
-stylesheet on another origin (`fail`), a stylesheet reply that stops short or never ends
-(`blind`), and a site that never listens (`blind`, because the `web` healthcheck below keeps
-`docker compose up --wait` from returning). That shows the crawl runs, stops on its time bound and
-goes red. It says nothing about what `linkling-web` serves, and the stand-in is not nginx, so
-`deploy/nginx-privacy.conf` is not exercised either. Run it with the real site from a checkout that
-has `linkling-web` beside it. The first line of a whole-check run says which site it built and which
+runs it with `--api-only` in one job, and runs it again with a deliberate leak to show that it
+goes red, and again with a stats page that names a third-party stylesheet. A second CI job,
+`no-third-party-site`, runs the whole check, site included. It runs it against a small stand-in for
+the site (`tests/fixtures/standin-site`, named with `LINKLING_WEB_DIR`), and then against four
+copies of it that each carry one defect the check must catch
+(`scripts/no-third-party-standin.sh`): a stylesheet on another origin (`fail`), a stylesheet reply
+that stops short or never ends (`blind`), and a site that never listens (`blind`, because the
+`web` healthcheck below keeps `docker compose up --wait` from returning). That shows the crawl
+runs, stops on its time bound and goes red; it says nothing about what `linkling-web` serves, and
+the stand-in is not nginx, so `deploy/nginx-privacy.conf` is not exercised by it. The same job then
+checks out the real site, `jpslav/linkling-web` at its trunk (`main`), and runs the whole check
+against it. `linkling-web` is public, so that takes no deploy key and no secret. It also runs the
+check against an empty directory and an absent one and requires `blind`, so a checkout that leaves
+nothing to crawl cannot read as a clean site. The real-site run follows `linkling-web`'s `main`, so
+a push there can turn a build here red. To run the same check yourself, put a checkout of
+`linkling-web` beside this repository (or name it with `LINKLING_WEB_DIR`). The first line of a
+whole-check run says which site it built and which
 defect, if any, was put in it (`site fixture none` for a real run, `site fixture cut-short-reply`
 under the wrapper), and separately which compose overlay `--mutate` layered in
 (`compose mutation none`); a `--api-only` run has no site to name and gives only the second.

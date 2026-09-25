@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Shows that the site half of scripts/no-third-party-check.sh goes red when it should (LL-028).
-# CI cannot read the private linkling-web, so the check's crawl of the site runs there against a
-# stand-in (tests/fixtures/standin-site, whose server.py says what it is and what it is not).
+# CI crawls the real linkling-web too (LL-034), but a clean site cannot show the crawl going red
+# or blind, so those paths are shown against a stand-in (tests/fixtures/standin-site, whose
+# server.py says what it is and what it is not).
 # This runs the WHOLE check, not --api-only, against that stand-in with one deliberate defect put
 # in it, and succeeds only if the check ends red the way that defect must turn it:
 #

@@ -102,6 +102,14 @@ which is a one-line compose change and does not reopen this record.
   run the site half of the no-third-party check. It is not `linkling-web`, so the real site
   is still never built in CI, and nginx and `deploy/nginx-privacy.conf` are not exercised
   there.)*
+  > ⚠️ **Superseded 2026-09-25 — LL-034.** `linkling-web` became public on 2026-09-25, so a
+  > workflow reads it with no deploy key or secret, and CI now builds the real site too: the
+  > `no-third-party-site` job in `.github/workflows/ci.yml` checks out `jpslav/linkling-web` at
+  > `main` and runs the whole no-third-party check against it, beside the stand-in, which stays
+  > for the fail and blind paths a clean site cannot show. "CI can build only the service" and
+  > "the real site is still never built in CI" no longer hold. The decision itself is unchanged:
+  > the site's source is a checkout named by `LINKLING_WEB_DIR`, which CI puts at `linkling-web/`
+  > inside its workspace. The text above is left as written; this note was added by LL-034.
 - The database is `./data/linkling.db` on the host, owned on Linux by uid 10001. `docker compose down -v`
   does not touch it, because it is not a volume. `rm -rf data` or `git clean -fdx` does delete
   it.
