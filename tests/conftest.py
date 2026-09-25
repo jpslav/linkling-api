@@ -31,9 +31,13 @@ STARTUP_TIMEOUT_SECONDS = 20
 LONG_URL_BODY = b"arrived at the long url"
 
 
-def pytest_report_header() -> str:
-    """Name the SQLite the suite ran against: secure_delete and WAL differ across versions (LL-033)."""
-    return f"sqlite3.sqlite_version: {sqlite3.sqlite_version}"
+def pytest_terminal_summary(terminalreporter) -> None:
+    """Name the SQLite the suite ran against: secure_delete and WAL differ across versions (LL-033).
+
+    A summary line rather than a report header, because CI runs ``pytest -q``, which hides
+    the header.
+    """
+    terminalreporter.write_line(f"sqlite3.sqlite_version: {sqlite3.sqlite_version}")
 
 
 @pytest.fixture

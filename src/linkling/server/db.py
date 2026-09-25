@@ -36,9 +36,8 @@ import re
 import sqlite3
 import struct
 import time
-import uuid
+import threading
 from pathlib import Path
-from urllib.parse import quote
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
@@ -68,10 +67,6 @@ class MigrationError(RuntimeError):
     """The migrations on disk, or the state of the database, are not usable."""
 
 
-class CanonicaliseError(RuntimeError):
-    """The canonical copy of the database did not match it, so it was not copied back."""
-
-
 def connect(db_path: str | Path) -> sqlite3.Connection:
     """Open a connection with this service's pragmas.
 
@@ -88,21 +83,10 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     that same thread``. Each connection here is still owned by exactly one request from
     open to close, which is the property the thread check exists to protect.
 
-    The path is opened as a ``file:`` URI because ``canonicalise`` names an in-memory
-    database in ``VACUUM INTO``, and SQLite reads that name as a URI only when the
-    connection running it was opened with URIs on. Without it the name became a literal
-    file and the copy-back overwrote a scratch database with an empty one -- measured,
-    which is why ``canonicalise`` also refuses to copy back a copy whose rows differ.
-
     ``secure_delete`` zeroes freed bytes (ADR-0021), and ``temp_store=MEMORY`` keeps the
     temporary tables SQLite builds out of files in the temp directory.
     """
-    conn = sqlite3.connect(
-        "file:" + quote(str(db_path)),
-        uri=True,
-        isolation_level=None,
-        check_same_thread=False,
-    )
+    conn = sqlite3.connect(str(db_path), isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -163,53 +147,43 @@ def settle(conn: sqlite3.Connection, *, relayout: bool) -> None:
 def canonicalise(conn: sqlite3.Connection) -> None:
     """Rewrite the database file so its bytes depend only on its content (ADR-0021).
 
-    ``VACUUM INTO`` a fresh in-memory database writes every table in key order into new
-    pages. The backup API then copies those pages over this file in one transaction. Two
-    databases with the same rows, written in different orders, come out byte-identical --
-    except for the header counters, which the rest of this function and
-    ``_reset_change_counter`` put back.
+    ``VACUUM`` rebuilds every table in key order into fresh pages and copies them back
+    over the file while holding the write lock for the whole rebuild, so no other writer
+    can commit in between and be overwritten. Two databases with the same rows, written in
+    different orders, come out byte-identical except for the header counters, which the
+    rest of this function and ``_reset_change_counter`` put back.
 
-    Plain ``VACUUM`` gives the same page layout at the same cost (12-19 ms against 14-17 ms
-    on a 2.2 MB file), but only the copy-back lets the counters be put back.
-
-    The copy is checked before it is copied back: every table must have the same number
-    of rows as here. That check is not ceremony. Without URIs on this connection, the
-    in-memory name went to a file of that literal name and the backup copied an empty
-    database over the real one.
-
-    The backup raises the schema cookie by one. The cookie is set back only when
+    ``VACUUM`` raises the schema cookie by one. The cookie is set back only when
     ``sqlite_schema`` -- every name, root page and statement -- is unchanged, so any
-    connection that cached the schema at that cookie still holds a correct one.
-    Otherwise the cookie would count canonicalisations, and through them the days a
-    since-deleted link was followed.
+    connection that cached the schema at that cookie still holds a correct one. Otherwise
+    the cookie would count canonicalisations, and through them the days a since-deleted
+    link was followed.
     """
     schema_sql = "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_schema ORDER BY rowid"
     schema = [tuple(row) for row in conn.execute(schema_sql)]
     cookie = int(conn.execute("PRAGMA schema_version").fetchone()[0])
-    tables = [name for kind, name, *_ in schema if kind == "table"]
-    rows = [_row_count(conn, table) for table in tables]
-
-    name = f"file:linkling-canonical-{uuid.uuid4().hex}?mode=memory&cache=shared"
-    copy = sqlite3.connect(name, uri=True, isolation_level=None)
-    try:
-        conn.execute("VACUUM INTO ?", (name,))
-        copied = [_row_count(copy, table) for table in tables]
-        if copied != rows:
-            raise CanonicaliseError(
-                f"the canonical copy holds {copied} rows per table against {rows} in the "
-                f"database ({tables}) -- not copying it back"
-            )
-        copy.backup(conn)
-    finally:
-        copy.close()
-
+    conn.execute("VACUUM")
     if [tuple(row) for row in conn.execute(schema_sql)] == schema:
         conn.execute(f"PRAGMA schema_version={cookie}")
 
 
-def _row_count(conn: sqlite3.Connection, table: str) -> int:
-    quoted = '"' + table.replace('"', '""') + '"'
-    return int(conn.execute(f"SELECT count(*) FROM {quoted}").fetchone()[0])
+#: One descriptor per database file, opened once and never closed, for
+#: ``_reset_change_counter``. POSIX record locks belong to the process, and closing *any*
+#: descriptor on a file drops every lock the process holds on it -- SQLite's included. So
+#: the file is never closed here. Keyed by the file's device and inode.
+_header_fds: dict[tuple[int, int], int] = {}
+_header_fds_lock = threading.Lock()
+
+
+def _header_fd(path: str) -> int:
+    st = os.stat(path)
+    key = (st.st_dev, st.st_ino)
+    with _header_fds_lock:
+        fd = _header_fds.get(key)
+        if fd is None:
+            fd = os.open(path, os.O_RDWR)
+            _header_fds[key] = fd
+        return fd
 
 
 def _reset_change_counter(conn: sqlite3.Connection) -> None:
@@ -219,16 +193,19 @@ def _reset_change_counter(conn: sqlite3.Connection) -> None:
     change counter and version-valid-for (https://sqlite.org/fileformat2.html). In WAL
     mode ordinary writes leave the counter alone -- 2 after 300 follows, measured -- but a
     commit that rewrites page 1 on a fresh connection writes the counter it last read plus
-    one, and the backup always rewrites page 1. Left alone, it counted canonicalisations:
+    one, and ``VACUUM`` always rewrites page 1. Left alone, it counted canonicalisations:
     history A and history B, differing in how often a since-deleted link was followed,
     ended at 152 and 153.
 
     Why this is safe: "In WAL mode, changes to the database are detected using the
     wal-index and so the change counter is not needed" (the same page). A second
     connection with a warm page cache, open across a reset, read each of 5 later writes
-    correctly and ``integrity_check`` said ``ok``. The write happens only in WAL mode,
-    only after a checkpoint that left the WAL empty, and inside ``BEGIN IMMEDIATE``, so no
-    other writer or checkpoint can touch the file meanwhile.
+    correctly and ``integrity_check`` said ``ok``. The write happens only in WAL mode and
+    only after a checkpoint that left the WAL empty. It is made inside ``BEGIN IMMEDIATE``,
+    which keeps other writers in the WAL out while it happens, through a descriptor that
+    is never closed (``_header_fds``): closing one would release the locks SQLite holds on
+    the file, and with them the guarantee that no other process deletes the ``-wal`` or
+    changes the journal mode under this connection.
     """
     if conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
         return
@@ -236,13 +213,10 @@ def _reset_change_counter(conn: sqlite3.Connection) -> None:
     counter = struct.pack(">I", _CHANGE_COUNTER)
     conn.execute("BEGIN IMMEDIATE")
     try:
-        fd = os.open(path, os.O_RDWR)
-        try:
-            os.pwrite(fd, counter, 24)
-            os.pwrite(fd, counter, 92)
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+        fd = _header_fd(path)
+        os.pwrite(fd, counter, 24)
+        os.pwrite(fd, counter, 92)
+        os.fsync(fd)
     finally:
         conn.execute("COMMIT")
 

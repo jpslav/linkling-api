@@ -89,6 +89,11 @@ def _day_level_content() -> dict[tuple[str, str], int]:
             if k:
                 plan[(name, day)] = k
     plan[("live03", "2026-09-02")] = 131
+    plan[("live00", "2026-09-03")] = 3
+    # live12 is left for the tail's first and second follow on the last day. Its cell sits
+    # mid-page, so a grown cell that moved would show; the newest link's cell sits at the
+    # top of the content area, where a move leaves nothing behind (measured).
+    plan.pop(("live12", "2026-09-03"), None)
     plan[("brief", "2026-09-01")] = 2
     return plan
 
@@ -98,7 +103,9 @@ def _copy(data: Path) -> dict[str, bytes]:
     return {p.name: p.read_bytes() for p in sorted(data.iterdir()) if p.is_file()}
 
 
-def _run_history(data: Path, which: str, mp: pytest.MonkeyPatch, *, copy_mid_request, hold_open):
+def _run_history(
+    data: Path, which: str, mp: pytest.MonkeyPatch, *, copy_mid_request, hold_open, tail=None
+):
     data.mkdir()
     path = data / DB
     app = create_app(Config(api_key=KEY, db_path=str(path)))
@@ -109,6 +116,7 @@ def _run_history(data: Path, which: str, mp: pytest.MonkeyPatch, *, copy_mid_req
     mp.setattr(counts, "_epoch_seconds", lambda: clock["value"])
     content = _day_level_content()
     copied: dict[str, bytes] = {}
+    record_tail = tail is not None
     held = None
 
     with TestClient(app, follow_redirects=False) as client:
@@ -140,6 +148,25 @@ def _run_history(data: Path, which: str, mp: pytest.MonkeyPatch, *, copy_mid_req
                 assert client.get("/gone").status_code == 410
                 assert client.get("/brief").status_code == 410  # expired; counts kept
 
+        # The tail: the same writes in both histories, each of a kind that moves a cell,
+        # copied after each one. A later canonicalisation would erase an earlier write's
+        # layout, so each kind has to be looked at straight after it happens.
+        def after(step):
+            if record_tail:
+                tail[step] = _copy(data)
+
+        create("aaa-late", "https://example.com/aaa-late")  # sorts before every other name
+        after("a create")
+        assert client.get("/live12").status_code == 302
+        after("a first follow")
+        assert client.get("/live12").status_code == 302
+        after("a second follow")
+        for _ in range(128 - content.get(("live05", DAYS[-1]), 0)):
+            assert client.get("/live05").status_code == 302
+        after("a count reaching 128")
+        assert client.delete("/-/api/links/live06", headers=auth).status_code == 204
+        after("a delete")
+
         # The last request: one more follow of a link already followed today, so it is
         # the same in-place write in both histories.
         if copy_mid_request:
@@ -166,11 +193,16 @@ def _run_history(data: Path, which: str, mp: pytest.MonkeyPatch, *, copy_mid_req
 def copies(tmp_path_factory):
     """Both histories, copied at each of the three moments. Built once for the module."""
     mp = pytest.MonkeyPatch()
-    out = {}
+    out = {case: {} for case in CASES}
+    out["tail"] = {}
     try:
         for case, how in CASES.items():
             tmp = tmp_path_factory.mktemp(case)
-            out[case] = {w: _run_history(tmp / w, w, mp, **how) for w in "AB"}
+            for which in "AB":
+                tail = {} if case == "at-rest" else None
+                out[case][which] = _run_history(tmp / which, which, mp, **how, tail=tail)
+                if tail is not None:
+                    out["tail"][which] = tail
     finally:
         mp.undo()
     return out
@@ -227,29 +259,66 @@ def _count_record_body(link_id: int, day: str, count: int) -> bytes:
     return id_body + day.encode() + count_body
 
 
-def _leaf_cell_offsets(data: bytes, root: int) -> list[tuple[int, list[int]]]:
-    """Walk an index b-tree from ``root`` over raw bytes: each leaf's cell offsets, in key order."""
+#: b-tree page types (fileformat2.html, "B-tree Pages") and each one's header length.
+_PAGE_HEADER = {2: 12, 5: 12, 10: 8, 13: 8}
+
+
+def _misplaced(data: bytes, roots: dict[str, int]) -> tuple[dict[str, int], list[str]]:
+    """Walk every b-tree over raw bytes. Returns cells seen per tree and what is out of place.
+
+    A page written in key order, all at once -- which is what ``VACUUM`` does -- has its
+    cells packed from the end of the page in key order, no freeblock and no fragmented
+    bytes, and the file has no free pages. A page that took its rows one at a time holds
+    them in arrival order; a page a cell left or grew out of holds a freeblock. Either is a
+    record of what happened when, which is what this looks for.
+    """
     page_size = struct.unpack(">H", data[16:18])[0]
     page_size = 65536 if page_size == 1 else page_size
-    leaves, pending = [], [root]
-    while pending:
-        page = pending.pop()
-        base = (page - 1) * page_size
-        header = base + (100 if page == 1 else 0)
-        kind = data[header]
-        cells = struct.unpack(">H", data[header + 3 : header + 5])[0]
-        start = header + (12 if kind == 2 else 8)
-        offsets = [
-            struct.unpack(">H", data[start + 2 * i : start + 2 * i + 2])[0] for i in range(cells)
-        ]
-        if kind == 2:  # interior index page: each cell starts with its left child
-            pending += [struct.unpack(">I", data[base + o : base + o + 4])[0] for o in offsets]
-            pending.append(struct.unpack(">I", data[header + 8 : header + 12])[0])
-        elif kind == 10:  # leaf index page
-            leaves.append((page, offsets))
-        else:
-            pytest.fail(f"DB-BYTES BLIND: page {page} is type {kind}, not an index b-tree page")
-    return leaves
+    problems = []
+    free_pages = struct.unpack(">I", data[36:40])[0]
+    if free_pages:
+        problems.append(f"{free_pages} free pages")
+    cells_seen = {}
+    for tree, root in roots.items():
+        cells_seen[tree] = 0
+        pending = [root]
+        while pending:
+            page = pending.pop()
+            base = (page - 1) * page_size
+            header = base + (100 if page == 1 else 0)
+            kind = data[header]
+            if kind not in _PAGE_HEADER:
+                pytest.fail(f"DB-BYTES BLIND: page {page} of {tree} is type {kind}, not a b-tree page")
+            freeblock = struct.unpack(">H", data[header + 1 : header + 3])[0]
+            fragmented = data[header + 7]
+            cells = struct.unpack(">H", data[header + 3 : header + 5])[0]
+            start = header + _PAGE_HEADER[kind]
+            offsets = [
+                struct.unpack(">H", data[start + 2 * i : start + 2 * i + 2])[0] for i in range(cells)
+            ]
+            if freeblock or fragmented:
+                problems.append(f"{tree} page {page}: freeblock at {freeblock}, {fragmented} fragmented bytes")
+            if offsets != sorted(offsets, reverse=True):
+                problems.append(f"{tree} page {page}: cells out of key order")
+            if kind in (2, 5):  # interior: each cell starts with its left child's page number
+                pending += [struct.unpack(">I", data[base + o : base + o + 4])[0] for o in offsets]
+                pending.append(struct.unpack(">I", data[header + 8 : header + 12])[0])
+            else:
+                cells_seen[tree] += cells
+    return cells_seen, problems
+
+
+def _assert_laid_out_by_content_alone(copy: dict[str, bytes], tmp: Path, label: str) -> None:
+    data = _db_bytes(copy)
+    roots = dict(_inspect(copy, tmp, "SELECT name, rootpage FROM sqlite_schema WHERE rootpage > 0"))
+    [(rows,)] = _inspect(copy, tmp, "SELECT count(*) FROM daily_counts")
+    cells_seen, problems = _misplaced(data, roots)
+    if rows == 0 or cells_seen.get("daily_counts") != rows:
+        pytest.fail(
+            f"DB-BYTES BLIND: the page walk found {cells_seen.get('daily_counts')} cells for "
+            f"{rows} daily_counts rows ({label})"
+        )
+    assert not problems, f"{label}: {problems[:6]}"
 
 
 @pytest.mark.parametrize("case", CASES)
@@ -293,30 +362,78 @@ def test_leak_1_a_deleted_links_counts_are_nowhere_in_the_files(copies, case, tm
 
 @pytest.mark.parametrize("case", CASES)
 def test_leak_2_no_page_keeps_the_order_rows_arrived_in(copies, case, tmp_path):
-    """Every leaf of ``daily_counts`` holds its cells packed in key order, first key last in the page.
+    """Every b-tree page holds its cells packed in key order, with no free space left behind.
 
     SQLite takes a new cell from the free space at the top of the content area, so a page
-    written row by row stores them in arrival order: the order of each day's first follows.
+    written row by row stores rows in arrival order: the order of each day's first follows.
     """
     for which in "AB":
-        copy = copies[case][which]
-        data = _db_bytes(copy)
-        [(root, rows)] = _inspect(
-            copy,
-            tmp_path / which,
-            "SELECT rootpage, (SELECT count(*) FROM daily_counts) FROM sqlite_schema "
-            "WHERE name = 'daily_counts'",
-        )
-        leaves = _leaf_cell_offsets(data, root)
-        walked = sum(len(offsets) for _, offsets in leaves)
-        if rows == 0 or walked != rows:
-            pytest.fail(
-                f"DB-BYTES BLIND: the page walk found {walked} cells for {rows} rows in history {which}"
+        _assert_laid_out_by_content_alone(copies[case][which], tmp_path / which, f"history {which}")
+
+
+def test_leak_2_every_kind_of_write_that_moves_a_cell_is_rewritten(copies, tmp_path):
+    """Straight after a create, a first follow, a second, a count reaching 128 and a delete.
+
+    Each of these moves or frees a cell. Checked after each one, because the next
+    canonicalisation would otherwise tidy up after a write that was never tidied itself.
+    """
+    steps = ["a create", "a first follow", "a second follow", "a count reaching 128", "a delete"]
+    for which in "AB":
+        tail = copies["tail"].get(which, {})
+        if sorted(tail) != sorted(steps):
+            pytest.fail(f"DB-BYTES BLIND: history {which} copied {sorted(tail)}, not {steps}")
+        for step in steps:
+            _assert_laid_out_by_content_alone(
+                tail[step], tmp_path / which / step.replace(" ", "-"), f"history {which}, after {step}"
             )
-        unordered = [page for page, offsets in leaves if offsets != sorted(offsets, reverse=True)]
-        assert not unordered, (
-            f"history {which}: {len(unordered)} of {len(leaves)} leaf pages hold cells out of key order"
+
+
+def test_startup_rewrites_a_file_an_earlier_version_left(tmp_path):
+    """A database written by the layout before ADR-0021 is rewritten when the service starts.
+
+    It is written here the way that layout wrote it: rows in arrival order, a delete that
+    frees cells, no ``secure_delete``. Starting the app and stopping it must leave a file
+    whose pages carry none of that.
+    """
+    data = tmp_path / "data"
+    data.mkdir()
+    path = data / DB
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.execute("PRAGMA journal_mode=WAL")
+    from linkling.server import db
+
+    db.migrate(conn)
+    for name in ("ccc", "aaa", "bbb", "gone"):
+        conn.execute(
+            "INSERT INTO links(name, target, created_at) VALUES (?, ?, '2026-08-31T00:00:00Z')",
+            (name, GONE_TARGET["A"] if name == "gone" else f"https://example.com/{name}"),
         )
+    for name in ("gone", "bbb", "ccc", "aaa", "gone", "bbb"):
+        conn.execute(
+            "INSERT INTO daily_counts(link_id, day, count) "
+            "SELECT id, '2026-09-01', 1 FROM links WHERE name = ? "
+            "ON CONFLICT(link_id, day) DO UPDATE SET count = count + 1",
+            (name,),
+        )
+    conn.execute(
+        "UPDATE links SET target = '', deleted_at = '2026-09-01T12:00:00Z' WHERE name = 'gone'"
+    )
+    conn.close()
+    before = _copy(data)
+    _, problems_before = _misplaced(
+        _db_bytes(before),
+        dict(_inspect(before, tmp_path / "before", "SELECT name, rootpage FROM sqlite_schema WHERE rootpage > 0")),
+    )
+    if not problems_before:
+        pytest.fail("DB-BYTES BLIND: the file written the old way already looks rewritten")
+
+    with TestClient(create_app(Config(api_key=KEY, db_path=str(path)))):
+        pass
+    after = _copy(data)
+    _assert_laid_out_by_content_alone(after, tmp_path / "after", "after startup")
+    target = GONE_TARGET["A"].encode()
+    pieces = {target[i : i + WINDOW] for i in range(len(target) - WINDOW + 1)}
+    assert not {n for n, blob in after.items() for p in pieces if p in blob}
 
 
 @pytest.mark.parametrize("case", CASES)
