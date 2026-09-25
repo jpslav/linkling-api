@@ -1,4 +1,0 @@
-# The input Dependabot re-resolves requirements-build.lock.txt from (LL-024, ADR-0018). It says what
-# pyproject.toml's [build-system] requires says, and tests/test_ll024_pins_refresh.py fails if the
-# two differ.
-setuptools>=68

@@ -136,18 +136,20 @@ base image (`python:3.12-slim`, pinned by digest in three Dockerfiles: the servi
 observer that `scripts/no-third-party-check.sh` builds, and the stand-in site's) go stale on their
 own: a security release reaches no deployer until someone re-locks and re-pins. Dependabot does
 that (`.github/dependabot.yml`, `docs/adr/0018-dependabot-refreshes-the-locks-and-digests.md`).
-Every Monday it opens at most two pull requests, each only when something moved: one that
-re-resolves both lock files together, and one that moves the three digests together. CI runs on
+Every Monday it opens at most two pull requests, each only when something moved: one for the
+lock files, and one that moves the three digests together. CI runs on
 them like on any pull request, and the image build in the `compose` and `no-third-party` jobs is
 what runs the websockets/wsproto guard (`scripts/no-forbidden-imports-check.sh`) against the new
 lock. A green one is merged; a red one is the exception to look at. Nothing is refreshed by hand.
 
-Two things make that work, and tests fail when either breaks: each lock has a `.in` file beside
-it (`requirements.lock.in`, `requirements-build.lock.in`) saying what `pyproject.toml` says,
-which is what makes Dependabot re-resolve the whole set instead of bumping one pinned line at a
-time, and every Dockerfile is listed in the config. Dependabot is held to the `3.12-slim` tag: it
-refreshes that tag's digest and never proposes another Python. To re-lock by hand, use the command
-at the top of each lock file.
+Two things make that work, and tests fail when either breaks. `requirements.lock.in` sits beside
+`requirements.lock.txt` and says what `pyproject.toml` says: that file is what makes Dependabot
+re-resolve the whole set instead of bumping one pinned line at a time, which leaves pins that
+cannot be installed together. (`requirements-build.lock.txt` has no such file on purpose; its
+header says why.) And every Dockerfile is listed in the config. A third test fails if a refresh PR
+leaves a lock without the pins it exists for, or a pin without its hashes. Dependabot is held to
+the `3.12-slim` tag: it refreshes that tag's digest and never proposes another Python. To re-lock
+by hand, use the command at the top of each lock file.
 
 ### Where the database lives
 

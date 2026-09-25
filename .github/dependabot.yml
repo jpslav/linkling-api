@@ -9,10 +9,11 @@ version: 2
 updates:
   # requirements.lock.txt and requirements-build.lock.txt. Dependabot hands a lock to its pip-compile
   # updater, which re-resolves the whole set, when a `.in` file of the same basename sits beside
-  # it: that is why requirements.lock.in and requirements-build.lock.in exist. Without them it
-  # edits one pinned line at a time and never re-resolves, and measured on a stale copy of this
-  # lock it opened PRs that `pip install --require-hashes` refuses (pydantic-core moved on its
-  # own; pydantic requires its exact version). One group, so a release wave is one PR, not thirteen.
+  # it: that is why requirements.lock.in exists. Without one Dependabot edits one pinned line at a
+  # time and never re-resolves, and measured on a stale copy of this lock it opened PRs that
+  # `pip install --require-hashes` refuses (pydantic-core moved on its own; pydantic requires its
+  # exact version). requirements-build.lock.txt is the exception and has no `.in` on purpose: its
+  # header says why. One group, so a release wave is one PR, not thirteen.
   - package-ecosystem: pip
     directory: /
     schedule:
