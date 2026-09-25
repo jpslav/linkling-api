@@ -3,8 +3,8 @@
 # (ADR-0009, LL-018). Every packet the `api` and `web` containers send is captured, from
 # before each one starts, while the check creates a link, follows it, follows a name that does
 # not exist, opens the stats page with and without the team key, reads the link's counts with
-# and without it, deletes the link, follows it and reads its counts again, and loads the public
-# site. A sent packet that is not a reply to the check's own
+# and without it, fetches the privacy manifest, deletes the link, follows it and reads its
+# counts again, and loads the public site. A sent packet that is not a reply to the check's own
 # requests fails the run, and so does any DNS query.
 #
 # A capture that sees nothing looks exactly like a clean one, so every run plants its own
@@ -276,10 +276,11 @@ call counts "the link's counts with the team key" 200 '%{http_code}' "$base/-/ap
 grep -qE '"days": *\{"[0-9]{4}-[0-9]{2}-[0-9]{2}": *1\}' "$work/counts.body" \
     || blind "the link's counts answered 200 without the one follow the check made, so it was not exercised"
 call counts-anon "the link's counts without a credential" 401 '%{http_code}' "$base/-/api/links/$canary/stats"
+call privacy "the privacy manifest" 200 '%{http_code}' "$base/-/privacy.json"
 call delete "deleting the link" 204 '%{http_code}' -X DELETE "$base/-/api/links/$canary" "${auth[@]}"
 call gone "following the deleted link" 410 '%{http_code}' "$base/$canary"
 call gone-counts "the deleted link's counts" 410 '%{http_code}' "$base/-/api/links/$canary/stats" "${auth[@]}"
-echo "api exercised: create, follow, follow of a missing name, /-/stats with and without the team key, /-/api/links/<name>/stats with and without the team key, delete, follow of the deleted link, /-/api/links/<name>/stats of the deleted link"
+echo "api exercised: create, follow, follow of a missing name, /-/stats with and without the team key, /-/api/links/<name>/stats with and without the team key, /-/privacy.json, delete, follow of the deleted link, /-/api/links/<name>/stats of the deleted link"
 
 findings=()
 

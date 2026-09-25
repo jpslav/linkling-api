@@ -1,4 +1,4 @@
-"""The FastAPI application: create, follow, delete, one link's counts and the stats page.
+"""The FastAPI application: links, follows, counts, the stats page and the privacy manifest.
 
 The route space is ADR-0001's: link names live at the root, everything the service serves
 itself lives under ``/-/``, and a custom name may not begin with ``-`` -- which is what
@@ -48,7 +48,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict
 from starlette.datastructures import MutableHeaders
 
-from . import counts, db, links, names, stats
+from . import counts, db, links, names, privacy, stats
 from .config import Config, load_config
 
 #: ADR-0003: the status a live link answers with.
@@ -289,6 +289,9 @@ def _validate_created_by(raw: str | None) -> str | None:
 def create_app(config: Config | None = None) -> FastAPI:
     """Build the application. ``config`` defaults to the process environment."""
     settings = load_config() if config is None else config
+    # Read once, here: a missing manifest stops the service being built, rather than
+    # becoming a 500 on the day someone checks it.
+    manifest = privacy.manifest_bytes()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -496,6 +499,15 @@ def create_app(config: Config | None = None) -> FastAPI:
         Never calls into ``counts``: opening the page must not count as a follow.
         """
         return HTMLResponse(stats.render(stats.collect(conn)))
+
+    @app.api_route("/-/privacy.json", methods=["GET", "HEAD"])
+    def privacy_manifest() -> Response:
+        """ADR-0008 §c: the manifest of what the service stores, byte for byte as shipped.
+
+        No credential: anyone reading the privacy page can check it against the deployed
+        copy. Never touches the database, so fetching it is not a follow.
+        """
+        return Response(content=manifest, media_type="application/json")
 
     @app.api_route("/{name}", methods=["GET", "HEAD"])
     @app.api_route("/{name}/", methods=["GET", "HEAD"])

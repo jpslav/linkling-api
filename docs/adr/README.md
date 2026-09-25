@@ -19,4 +19,5 @@
 | [0017](0017-loopback-bind-and-locked-image.md) | Loopback bind by default, and a locked, digest-pinned image | Accepted |
 | [0018](0018-dependabot-refreshes-the-locks-and-digests.md) | Dependabot refreshes the locks and base-image digests, with a .in file as the main lock's input | Accepted |
 | [0019](0019-ci-tests-the-locks-and-pins-its-actions.md) | CI runs pytest against the hash-locked environment, and pins its actions by commit SHA | Accepted |
+| [0020](0020-privacy-manifest-format.md) | The privacy manifest ships as package data, in a format whose retention claims a test enforces | Proposed |
 <!-- adr-index:end -->

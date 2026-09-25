@@ -2,7 +2,8 @@
 # Brings up the compose stack's service from nothing and checks the three things LL-005 is
 # about. (1) It answers. (2) A link survives `docker compose down` and `up` again, and the
 # documented backup produces a sound copy. (3) Its logs hold no per-request line and no
-# client address (ADR-0004, ADR-0012).
+# client address (ADR-0004, ADR-0012). And one thing LL-015 is about: (4) the image serves
+# the privacy manifest byte for byte as this checkout ships it.
 #
 # It uses its own compose project, host port and data directory, so it never touches a stack
 # already running from this checkout, nor that stack's database:
@@ -75,7 +76,8 @@ export LINKLING_BIND_ADDR=127.0.0.1
 
 dc() { docker compose -p "$project" "$@"; }
 
-cleanup() { dc down >/dev/null 2>&1 || true; }
+served_manifest="$(mktemp)"
+cleanup() { dc down >/dev/null 2>&1 || true; rm -f "$served_manifest"; }
 trap cleanup EXIT
 
 start() {
@@ -101,11 +103,14 @@ start() {
 # timeout. What curl printed decides it: curl prints 000 when no HTTP status came back. The exit
 # status only names the reason, and nothing overwrites $answer when it is non-zero, because a
 # status curl did print survives a non-zero exit (a body cut short, say) and `|| answer=000`
-# would have discarded it.
+# would have discarded it. `ask -o <file> ...` keeps the reply body in <file>; without it the
+# body is discarded.
 ask() {
-    local step="$1" fmt="$2" rc why
+    local out=/dev/null step fmt rc why
+    if [ "$1" = -o ]; then out="$2"; shift 2; fi
+    step="$1" fmt="$2"
     shift 2
-    if answer="$(curl -s --max-time "$max_time" -o /dev/null -w "$fmt" "$@")"; then rc=0; else rc=$?; fi
+    if answer="$(curl -s --max-time "$max_time" -o "$out" -w "$fmt" "$@")"; then rc=0; else rc=$?; fi
     case "$answer" in
         ""|000*)
             case "$rc" in
@@ -151,6 +156,16 @@ follow "before the restart"
 got="$answer"
 [ "$got" = "302 $target" ] || fail "the first follow gave '$got', not '302 $target'"
 echo "follow before restart: $got"
+
+# (4) The image serves the manifest this checkout ships, byte for byte (ADR-0008 §c, ADR-0020).
+# It is fetched to a file through `ask` and compared after, so a fetch that got no answer is
+# `blind`, while a wrong status or a different body is `fail`. Piping curl straight into `cmp`
+# would make the two look the same.
+ask -o "$served_manifest" "fetching /-/privacy.json" '%{http_code}' "$base/-/privacy.json"
+[ "$answer" = 200 ] || fail "/-/privacy.json answered $answer, not 200"
+cmp -s "$served_manifest" src/linkling/server/privacy/what-we-store.json \
+    || fail "/-/privacy.json is not byte-identical to src/linkling/server/privacy/what-we-store.json"
+echo "privacy manifest: served byte-identical to the checkout's"
 
 [ -f "$data/linkling.db" ] || fail "no linkling.db in the bind-mounted $data"
 

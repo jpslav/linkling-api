@@ -75,6 +75,10 @@ which did not functionally exist when it was written. This item leaves a tombsto
 implication whether ADR-0005's "a tombstone stores only a name and a date" should now read
 as "and its dates."
 
+> ⚠️ **Added 2026-09-25 (LL-015).** ADR-0020 now answers this question (Proposed): a tombstone
+> keeps `expires_at`. The privacy manifest declares `links.expires_at` with
+> `on_delete: "kept"`, and `tests/test_ll015_privacy_manifest.py` enforces that claim.
+
 ## Decision record
 
 Accepted 2026-09-25 by `pm-3`, the program manager, under the 2026-09-22 ruling in `company/DECISIONS.md` of the program repo ("What reaches the owner is user-visible impact, not cost to undo"): the shape of the API's `expires` field is not something a user of Linkling perceives, because team members reach expiry through the CLI (LL-003), which can accept friendlier forms (`7d`, a bare date) and convert them to an absolute instant before the HTTP call. The CLI owns any friendlier input; this ADR fixes only what the API takes. Proposed since 2026-09-23. Checked against `main` at `ac4e085` before accepting: `_validate_expires` in `src/linkling/server/app.py` parses `expires` with `links.TIMESTAMP_FORMAT` (`%Y-%m-%dT%H:%M:%SZ`), answers `422` to a value that does not reproduce byte-for-byte through `strftime` and to one that is not strictly after the request's `now`, and `links.is_expired` compares `expires_at` with `_now()` as plain strings. The CLI is not built (LL-003 is blocked as of 2026-09-25), so what it will accept is its own to decide when it is.
