@@ -32,7 +32,7 @@ before LL-001 lands.
    > `requirements.lock.txt`, `requirements-test.lock.txt` and `requirements-build.lock.txt`
    > under `pip install --require-hashes`, then `pip install --no-deps --no-build-isolation -e .`,
    > then runs `pytest -q`. A dependency added to `pyproject.toml` is therefore no longer picked
-   > up by CI on its own: it has to be re-locked (README, "Keeping the pins fresh"). The
+   > up by CI on its own: it has to be re-locked (README, "Keeping the pins fresh", says how). The
    > `test` extra is still declared in `pyproject.toml` and is still what a developer's
    > virtualenv installs (README). The text above is left as written; this note was added by
    > LL-032.
