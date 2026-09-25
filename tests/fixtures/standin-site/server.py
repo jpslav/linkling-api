@@ -1,10 +1,11 @@
 """A stand-in for `linkling-web`, so that the site half of scripts/no-third-party-check.sh runs in CI.
 
-CI cannot read the private `linkling-web` (ADR-0015), so the check's crawl of the public site had
-nothing to run against there. This serves what the crawl needs and nothing else: `/` and
-`/privacy.html` as HTML, two same-origin stylesheets, and a 404. It is not the real site: it is
-not nginx, so the shipped `deploy/nginx-privacy.conf` (mounted by compose.yaml) is inert here, and
-it says nothing about what the real pages contain.
+`linkling-web` was private when this was written (ADR-0015), so the check's crawl of the public site
+had nothing to run against in CI. It is public now and CI crawls it too (LL-034), but a clean site
+cannot show the crawl going red or blind, which is what this is for. This serves what the crawl
+needs and nothing else: `/` and `/privacy.html` as HTML, two same-origin stylesheets, and a 404. It
+is not the real site: it is not nginx, so the shipped `deploy/nginx-privacy.conf` (mounted by
+compose.yaml) is inert here, and it says nothing about what the real pages contain.
 
 What it serves is fixed at build time by the one word in the `mode` file beside it, which the
 Dockerfile copies to /mode. `none` is the clean site. Each other mode is a deliberate fault that
