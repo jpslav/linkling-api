@@ -125,7 +125,10 @@ checks out the real site, `jpslav/linkling-web` at its trunk (`main`), and runs 
 against it. `linkling-web` is public, so that takes no deploy key and no secret. It also runs the
 check against an empty directory and an absent one and requires `blind`, so a checkout that leaves
 nothing to crawl cannot read as a clean site. The real-site run follows `linkling-web`'s `main`, so
-a push there can turn a build here red. To run the same check yourself, put a checkout of
+a push there can turn a build here red. `linkling-web`'s own CI runs the check too (LL-035), from a
+checkout of this repository at `main`: a regression in the site is caught in the pull request that
+makes it, without a build here, and a change here to the script or to what it builds reaches
+`linkling-web`'s builds once it is on `main`. To run the same check yourself, put a checkout of
 `linkling-web` beside this repository (or name it with `LINKLING_WEB_DIR`). The first line of a
 whole-check run says which site it built and which defect, if any, was put in it
 (`site fixture none` for a real run, `site fixture cut-short-reply` under the wrapper), and
@@ -154,7 +157,11 @@ the locks under `pip install --require-hashes`, so a lock PR is exercised by the
 only by the image build. The websockets/wsproto guard (`scripts/no-forbidden-imports-check.sh`)
 runs against the new lock in the image build of the `compose` and `no-third-party` jobs (it is called
 from the `Dockerfile`) and in the `no-forbidden-imports` job. A green one is merged; a red one is the exception to look at. Nobody has to
-re-lock or re-pin by hand.
+re-lock or re-pin by hand. The runner is not one of these pins: every job runs on `ubuntu-24.04`,
+not on the `ubuntu-latest` alias, and a `runs-on` label is not the action reference that Dependabot's
+actions block moves, so a person moves it. The comment at the top of `.github/workflows/ci.yml` says
+why it is pinned, and `tests/test_ll035_runner_pinned.py` fails unless every job names a versioned
+Ubuntu image.
 
 Two things make that work, and tests fail when either breaks. `requirements.lock.in` and
 `requirements-test.lock.in` sit beside their `.txt` and say what `pyproject.toml` says (the

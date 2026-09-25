@@ -25,7 +25,7 @@
   "autoMode": {
     "environment": [
       "$defaults",
-      "GitHub work for this program lives under the jpslav account, a personal account rather than an organization, and every repository there is private.",
+      "GitHub work for this program lives under the jpslav account, a personal account rather than an organization. linkling-api and linkling-web are public, so anything pushed to either is published; the program repository is private.",
       "This machine is a Mac shared with other, unrelated Claude sessions and programs. Act only on sessions, worktrees and repositories under ~/dev/jpslav/tinyworks.",
       "This Mac is NOT the headless box this program's runbooks describe. Never run tools/box-setup.sh (it installs Debian packages and rewrites this machine's global ~/.claude/settings.json) or tools/box-stop.sh (it stops sessions by name across the whole machine, including other programs'). box-setup.sh --check is read-only and fine.",
       "There is no Discord channel configured, so every channel post reports BLIND. That is expected here: the queue file is the record, and the post is only a doorbell."

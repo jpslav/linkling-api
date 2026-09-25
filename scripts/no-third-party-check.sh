@@ -43,6 +43,9 @@
 #               crawl runs and goes red, not that the real site is clean; and then at a checkout
 #               of the public linkling-web (LL-034), which is the check of the real site.
 #               Without --api-only, a missing checkout is blind, never a silent skip.
+#               linkling-web's own CI runs this script too (LL-035), from a checkout of this
+#               repository at `main`, with LINKLING_WEB_DIR pointed at its own checkout, so what
+#               the script needs of a site directory and of this repository is also that job's.
 #   --mutate    layer in a deliberate leak from scripts/no-third-party/mutations/, to show the
 #               check going red. Each must fail and name what it saw.
 #
