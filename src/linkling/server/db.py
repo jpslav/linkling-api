@@ -136,7 +136,7 @@ def settle(conn: sqlite3.Connection, *, relayout: bool) -> None:
     the frames: measured as ``(1, 1, 0)`` and a 4,152-byte ``-wal``. The service holds one
     connection at a time (``app.get_conn``), so only a process outside it can cause that.
     The rewrite is then owed (``_deferred``) until one lands: a rewrite that raises stays
-    owed too, and ``settle_owed`` lets the next request of any kind pay it.
+    owed too, and ``settle_owed`` lets the next request that opens the database pay it.
     """
     path = conn.execute("PRAGMA database_list").fetchone()["file"]
     relayout = relayout or path in _deferred
@@ -157,9 +157,10 @@ def settle(conn: sqlite3.Connection, *, relayout: bool) -> None:
 
 
 def settle_owed(conn: sqlite3.Connection) -> None:
-    """Do a rewrite an earlier request had to put off, on whatever request comes next.
+    """Do a rewrite an earlier request had to put off, on the next request that opens the database.
 
-    ``app.get_conn`` calls this before it closes every connection, reads included. Without
+    ``app.get_conn`` calls this before it closes every connection, reads included (a
+    request refused before it takes a connection, or ``/-/privacy.json``, opens none). Without
     it an owed rewrite waited for the next write: once the foreign reader had gone, a
     read's closing checkpoint moved the un-rewritten pages into ``linkling.db`` and they
     stayed there, however long the next write took (review round 3, measured).

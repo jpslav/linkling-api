@@ -76,7 +76,7 @@ nothing is anybody's chore.
    - It goes through one descriptor per file that is never closed. Closing any
      descriptor on a file releases every POSIX lock the process holds on it, SQLite's
      included.
-6. **A rewrite that cannot be done now is owed, and paid by the next request of any kind**
+6. **A rewrite that cannot be done now is owed, and paid by the next request that opens the database**
    (`db._deferred`, `db.settle_owed`).
    - When another process holds a read open, the checkpoint cannot empty the WAL. A
      rewrite then would copy every page into a WAL that cannot shrink until that reader
@@ -153,7 +153,9 @@ if a future SQLite starts using the counter in WAL mode.
     for example), the checkpoint cannot empty the WAL.
     - The `-wal` then keeps a frame per write, in order, until that read ends.
     - The rewrite is owed until then, so the latest writes' layout stays in the file.
-    - It is paid by the first request after the read ends, whatever that request is.
+    - It is paid by the first request after the read ends that opens the database, a read
+      or a write. `/-/privacy.json`, and a request refused before it reaches `get_conn`,
+      open none.
   - *A process that merely holds the database open* keeps the `-shm` alive while it is
     open, and the `-shm` counts the writes made since. It holds no page content. The
     README's backup command opens and closes in one step.
