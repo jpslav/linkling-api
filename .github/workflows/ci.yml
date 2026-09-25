@@ -8,6 +8,13 @@ on:
 # Every action is pinned by commit SHA, with the tag it was resolved from beside it; the
 # `github-actions` block of .github/dependabot.yml is set to open the PR that moves a pin (LL-030,
 # ADR-0019).
+#
+# Every job runs on ubuntu-24.04, not on the `ubuntu-latest` alias, which moves to Ubuntu 26 from
+# 2026-10-19 (actions/runner-images#14748). The Docker jobs below run on whatever Docker and kernel
+# the image ships, so the move should reach them when someone changes the label and watches them go
+# green, not on a date GitHub chose. `ubuntu-latest` was `ubuntu-24.04` when this was pinned, so
+# the pin changes nothing today. Dependabot does not move a runner label: this one is moved by
+# hand, and tests/test_ll035_runner_pinned.py fails if a job goes back to an `-latest` alias.
 
 jobs:
   # pytest runs in the environment the image ships plus the test-only packages, installed under
@@ -21,7 +28,7 @@ jobs:
   # nothing unhashed.
   test:
     name: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -37,7 +44,7 @@ jobs:
   # which Docker Desktop hides (ADR-0015 ii).
   compose:
     name: compose
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/compose-smoke.sh
@@ -50,7 +57,7 @@ jobs:
   # must fail, naming the host.
   no-third-party:
     name: no-third-party
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/no-third-party-check.sh --api-only
@@ -79,7 +86,7 @@ jobs:
   # not need pytest, so requirements-test.lock.txt is not part of it.
   no-forbidden-imports:
     name: no-forbidden-imports
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -123,9 +130,15 @@ jobs:
   # the first step relies on if a checkout ever leaves nothing where it looks. A clean site cannot
   # show the check going red, so the stand-in stays. And because the checkout follows
   # linkling-web's `main`, a push there can turn a build here red without a change here.
+  # The other way round too (LL-035): linkling-web's own CI has a job of this name, which checks out
+  # this repository at `main` and runs scripts/no-third-party-check.sh from it against its own
+  # checkout, so a regression in the site is caught when it is proposed there, without a build here.
+  # A change on this repository's `main` to that script, to what it builds (compose.yaml, the
+  # Dockerfile, deploy/nginx-privacy.conf, scripts/no-third-party/) or to what it needs of the site
+  # reaches linkling-web's builds as soon as it merges.
   no-third-party-site:
     name: no-third-party-site
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

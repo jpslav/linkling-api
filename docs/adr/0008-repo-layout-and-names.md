@@ -60,6 +60,11 @@ copy rather than the repository's.
 token reaches only its own repository, so a check in `linkling-web` needs a credential to
 read `linkling-api`.
 
+> ⚠️ **Superseded 2026-09-25** — both repos are public; see `products/linkling/DECISIONS.md` in
+> the program repo. A workflow in `linkling-web` reads `linkling-api` with no credential, and
+> LL-035 has one do it. The rest of this record, the table below included, was not reviewed for
+> that change.
+
 | Option | Blind case — what it prints when it measures nothing | Recurring |
 |---|---|---|
 | A. `linkling-web` CI fetches the manifest with a read-only token in a repo secret and diffs it against the page | Must print `PRIVACY MATCH BLIND: could not fetch manifest (HTTP <code>)` and **exit non-zero**. A fetch failure read as "no difference" is the whole failure mode | R1 after one owner action to create the token |
