@@ -83,5 +83,5 @@ another version or with other hashes, and on the config losing its `github-actio
 - A refresh is now up to three PRs a week (locks, digests, actions), each only when something moved.
 - The locked `starlette` warns about `httpx`. Nothing here acts on it; the `test` extra still names
   `httpx>=0.27`.
-- Branch protection requires only `test`. Nothing here changes a repository setting, and the owner
-  has been asked to require the other jobs.
+- Branch protection on `main` requires only `test` (`gh api repos/jpslav/linkling-api/branches/main/protection`,
+  2026-09-25). Nothing here changes a repository setting.
