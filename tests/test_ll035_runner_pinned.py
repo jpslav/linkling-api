@@ -6,8 +6,8 @@ This reads every workflow and fails on a job whose `runs-on` is anything but a v
 an alias (`ubuntu-latest`, `ubuntu-slim`), an expression that hides what it resolves to
 (`${{ matrix.os }}`, `${{ vars.RUNNER }}`) and a block list all move or hide the image, so going back
 to one of them, or adding a job that uses it, is red here and not silently a change of image on a
-date GitHub chose. Moving to `ubuntu-26.04` on purpose is a one-line change to the workflow and none
-to this test.
+date GitHub chose. Moving to `ubuntu-26.04` on purpose is a change to the `runs-on` lines of the
+workflow and none to this test (run against a copy of ci.yml with every label at `ubuntu-26.04`, it passes).
 """
 
 from __future__ import annotations

@@ -17,9 +17,9 @@ on:
 # of run 36182506686), so the pin changes nothing today. The `github-actions` block of
 # .github/dependabot.yml moves `uses:` references, and a `runs-on` label is not one (GitHub's
 # documentation: "Dependabot only supports updates to GitHub Actions using the GitHub repository
-# syntax", in "Using GitHub's security features to secure your use of GitHub Actions"), so this label
-# is moved by hand. tests/test_ll035_runner_pinned.py fails unless every job names a versioned Ubuntu
-# image (`ubuntu-NN.NN`), so an alias or an expression in its place is red.
+# syntax", on the "Secure use reference" page, docs.github.com/en/actions/reference/security/secure-use),
+# so this label is moved by hand. tests/test_ll035_runner_pinned.py fails unless every job names a
+# versioned Ubuntu image (`ubuntu-NN.NN`), so an alias or an expression in its place is red.
 
 jobs:
   # pytest runs in the environment the image ships plus the test-only packages, installed under
