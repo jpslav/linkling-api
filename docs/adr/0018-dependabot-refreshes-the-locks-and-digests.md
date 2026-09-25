@@ -28,12 +28,22 @@ checkout, on 2026-09-25, against this repo and against a copy of it whose locks 
   (`ResolutionImpossible`). On the stale copy it proposed 13 PRs, 3 of which exit 1 (`anyio` needs a
   newer `typing-extensions`; `pydantic` and `pydantic-core` each need the other), and a single group
   of all 13 exited 1 as well.
-- **With a `.in` file of the same basename beside each lock**, Dependabot hands the lock to its
-  pip-compile updater instead, which re-runs `pip-compile -P <name>` and keeps the file's header as
-  it was. On the stale copy every PR installed (12 of 12 ungrouped, on a copy whose header had been
-  rewritten to pip-tools' form; one group of 13 updates across both files, with uv's header kept),
-  and the coupled pins moved together (`pydantic` with `pydantic-core` 2.46.4 to 2.46.5, not
-  2.49.0).
+- **With a `requirements.lock.in` beside the main lock**, Dependabot hands it to its pip-compile
+  updater instead, which re-runs `pip-compile -P <name>` and keeps the file's header as it was. On
+  the stale copy one group PR moved 12 of the lock's 13 pins, the coupled ones together
+  (`pydantic` with `pydantic-core` 2.46.4 to 2.46.5, not 2.49.0), and left the file with all 13
+  pins, 144 hash lines and uv's header. `tests/test_ll024_pins_refresh.py` passed on the tree the
+  PR would leave, and so did `docker build` of the service image from the tree the lock PR and the
+  digest PR would leave together: the `--require-hashes` install of both locks, the
+  `--no-build-isolation` install of the package, and the websockets/wsproto guard.
+- **With a `.in` beside the build lock too, it is not usable.** A first pass of this measurement
+  said every PR installed; it had read only the exit status of `pip install --dry-run
+  --require-hashes`, which is 0 on an empty file. Reading the PR's files showed
+  `requirements-build.lock.txt` returned as its header alone, the `setuptools` pin gone, in every
+  run that had the `.in`. Dependabot did pass `--allow-unsafe`, and pip-compile run by hand with the
+  same flags keeps the pin (pip-tools files setuptools under "unsafe packages"), so the loss is
+  downstream of pip-compile, in the updater; where was not located. Without the `.in`, the plain
+  updater moved that pin (82.0.1 to 84.0.0) and kept its two hashes.
 - **The `docker` updater unconfigured** proposes `python:3.12-slim` to `3.14-slim` in each of the
   three Dockerfiles, as three PRs. With the three `directories`, one group using
   `group-by: dependency-name`, and `python`'s minor and major moves ignored, it opened one PR that
@@ -47,12 +57,14 @@ checkout, on 2026-09-25, against this repo and against a copy of it whose locks 
 - A `docker` block on the three Dockerfile directories, weekly on Mondays, one group across them,
   with `python`'s `semver-minor` and `semver-major` ignored: it refreshes the digest of the tag we
   ship and never proposes another Python. Moving to another Python is its own piece of work.
-- `requirements.lock.in` and `requirements-build.lock.in` beside the locks, which are otherwise
-  unchanged. They say what `pyproject.toml` says (`[project] dependencies` and
-  `[build-system] requires`), and `tests/test_ll024_pins_refresh.py` fails if they differ.
+- `requirements.lock.in` beside `requirements.lock.txt`, which is otherwise unchanged. It says what
+  `pyproject.toml`'s `[project] dependencies` says, and `tests/test_ll024_pins_refresh.py` fails if
+  they differ. `requirements-build.lock.txt` gets no `.in`, on purpose, and the test fails if one
+  appears.
 - The observer image is pinned by the service's digest, and that test also requires all three digests
-  to be equal. It also fails on a Dockerfile no `directories` entry covers, and on a lock with no
-  `.in`, so a new pin cannot go unrefreshed silently.
+  to be equal. It also fails on a Dockerfile no `directories` entry covers, and on a lock that is
+  missing a pin it exists for or has a pin without a hash, so a refresh PR that damages a lock is
+  red in the `test` job and not only in the image build.
 
 | Option | What was measured, or why not | Recurring |
 |---|---|---|
@@ -77,5 +89,6 @@ checkout, on 2026-09-25, against this repo and against a copy of it whose locks 
 - Dependabot reads its config from the default branch, and this file has not been through GitHub's
   own validation until it lands there: the first run after the merge is the first real one, and
   the repository's Dependabot page is where a parse error would be expected to show.
-- The list of top-level requirements now lives in two places per lock (`pyproject.toml` and the
-  `.in`), held together by a test rather than by construction.
+- The list of top-level requirements now lives in two places for the main lock (`pyproject.toml`
+  and the `.in`), held together by a test rather than by construction. The build lock is refreshed
+  by a different Dependabot updater from the main one, which is why it is a pin, not a set.
