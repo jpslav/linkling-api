@@ -5,19 +5,24 @@ Actions are pinned by commit SHA.
 workflow. What these tests hold is what would let either quietly stop being true
 (docs/adr/0019-ci-tests-the-locks-and-pins-its-actions.md):
 
-- every `uses:` in every workflow is a 40-hex commit SHA with its tag in a trailing comment, so an
-  action added by tag is red here and not a floating reference in CI;
+- every `uses:` in every workflow and local composite action is a 40-hex commit SHA with its tag
+  in a trailing comment (a `docker://` image, a sha256 digest), so an action added by tag is red
+  here and not a floating reference in CI;
 - the `test` job installs the three locks in one `pip install --require-hashes`, the image lock
-  first, and then the package with no dependencies and no build isolation, and no `pip install` in
-  any workflow, however it is spelled or wherever in a `run:` it sits, fetches from an index without
-  hashes except the one that is the red path of `no-forbidden-imports`;
+  first, and then the package with no dependencies and no build isolation, and no `pip install` in a
+  workflow or local composite action fetches from an index without hashes except the one that is
+  the red path of `no-forbidden-imports`. It reads the spellings `pip`, `pip3`, `pip3.12`,
+  `python -m pip` and `uv pip`, with options before `install`, and fails on an install named in a
+  `run:` it cannot parse; other ways to install (`pipx`, `pip download`, a piped script) it does not
+  read;
 - requirements-test.lock.in says what pyproject.toml says (the dependencies and the `test` extra),
   because that list now lives in two places more than it did;
 - requirements-test.lock.txt pins what the `test` extra names, every pin with a hash, repeats
   every pin of requirements.lock.txt at the same version with the same hashes, and pins nothing the
   image's forbidden-imports guard refuses, so the packages pytest runs against are the ones the
   image ships;
-- the config's `github-actions` block points at the workflows and is weekly, like the other two.
+- the config's `github-actions` block points at the workflows and is weekly on Mondays, like the
+  other two.
 
 Each comparison is between values read out of a file, and an empty read must not look like
 agreement, so each one is asserted against a value it must have.
@@ -46,7 +51,8 @@ FORBIDDEN_IMPORTS_CHECK = ROOT / "scripts" / "no-forbidden-imports-check.sh"
 # from an index without hashes is a way back to testing something the image does not ship.
 UNHASHED_INSTALLS = {"pip install --no-cache-dir websockets >/dev/null"}
 
-# `pip`, `pip3`, `pip3.12`, `python -m pip` and `uv pip` reach this, with options before `install`.
+# `pip`, `pip3`, `pip3.12`, `python -m pip` and `uv pip`, with options before `install`. `pipx`,
+# `pip download` and a piped install script are not read.
 PIP_INSTALL = re.compile(r"\bpip3?(?:\.\d+)?(?:\s+-\S+)*\s+install\b")
 # The package itself, with no dependencies of its own and nothing fetched to build it.
 PACKAGE_INSTALL = re.compile(r"pip install --no-deps --no-build-isolation (?:-e )?\.")

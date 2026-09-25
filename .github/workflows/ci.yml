@@ -6,16 +6,19 @@ on:
     branches: [main]
 
 # Every action is pinned by commit SHA, with the tag it was resolved from beside it; the
-# `github-actions` block of .github/dependabot.yml opens the PR that moves a pin (LL-030, ADR-0019).
+# `github-actions` block of .github/dependabot.yml is set to open the PR that moves a pin (LL-030,
+# ADR-0019).
 
 jobs:
-  # pytest runs in the environment the image ships plus the test-only packages, every package
-  # hash-verified (LL-030, ADR-0019), not in whatever pyproject.toml's ranges resolve to today.
-  # One pip run takes all three locks, as the Dockerfile's does: requirements.lock.txt is the
-  # shipped set; requirements-test.lock.txt adds pytest and httpx and repeats the shipped set, so
-  # pip refuses the pair if they ever name two versions of one package; requirements-build.lock.txt
-  # is the build backend, which is what lets the package install below use --no-build-isolation
-  # and fetch nothing unhashed.
+  # pytest runs in the environment the image ships plus the test-only packages, installed under
+  # --require-hashes (LL-030, ADR-0019), not in whatever pyproject.toml's ranges resolve to today.
+  # One pip run takes the three locks, as the Dockerfile's takes its two: requirements.lock.txt is
+  # the shipped set and goes first, because given one version at two sets of hashes pip enforces
+  # the first file's; requirements-test.lock.txt adds pytest and httpx and repeats the shipped set,
+  # so pip refuses the pair if they name two versions of one package, and
+  # tests/test_ll030_locked_ci.py holds that their hashes agree; requirements-build.lock.txt is the
+  # build backend, which is what lets the package install below use --no-build-isolation and fetch
+  # nothing unhashed.
   test:
     name: test
     runs-on: ubuntu-latest

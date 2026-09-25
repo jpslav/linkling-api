@@ -144,9 +144,9 @@ three pull requests, each only when something moved: one for the lock files, one
 digests together, and one for the actions. CI's `pull_request` trigger (`.github/workflows/ci.yml`)
 covers them like any other pull request. The `test` job runs pytest in an environment installed from
 the locks under `pip install --require-hashes`, so a lock PR is exercised by the test suite and not
-only by the image build, and the image build in the `compose` and `no-third-party` jobs is what runs
-the websockets/wsproto guard (`scripts/no-forbidden-imports-check.sh`, called from the `Dockerfile`)
-against the new lock. A green one is merged; a red one is the exception to look at. Nobody has to
+only by the image build. The websockets/wsproto guard (`scripts/no-forbidden-imports-check.sh`)
+runs against the new lock in the image build of the `compose` and `no-third-party` jobs (it is called
+from the `Dockerfile`) and in the `no-forbidden-imports` job. A green one is merged; a red one is the exception to look at. Nobody has to
 re-lock or re-pin by hand.
 
 Two things make that work, and tests fail when either breaks. `requirements.lock.in` and

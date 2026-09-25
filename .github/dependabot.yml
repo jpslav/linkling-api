@@ -51,10 +51,13 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # The actions in .github/workflows, each pinned by commit SHA with its tag in a trailing comment
-  # (LL-030, ADR-0019). `directory: /` is how this ecosystem is pointed at `.github/workflows`. One
-  # group, so a wave of releases is one PR, and no `ignore`: a new major of an action is a PR to
-  # read, like any other. tests/test_ll030_locked_ci.py fails if a `uses:` in a workflow is not
-  # pinned by SHA, so an action added by tag is red, not silently unpinned.
+  # (LL-030, ADR-0019). `directory: /` is what GitHub documents for checking `.github/workflows`
+  # (docs.github.com, "Keeping your actions up to date with Dependabot"). In dependabot-core's
+  # github_actions updater (file_updater/workflow_updater/version_commenter.rb, `updated_comment`),
+  # a trailing comment that ends in the version of the old SHA is rewritten to the new one: read
+  # there, not run. One group, so a wave of releases is one PR, and no `ignore`: a new major of an
+  # action is a PR to read, like any other. tests/test_ll030_locked_ci.py fails if a `uses:` in a
+  # workflow is not pinned by SHA, so an action added by tag is red, not silently unpinned.
   - package-ecosystem: github-actions
     directory: /
     schedule:
