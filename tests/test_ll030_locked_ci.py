@@ -7,14 +7,16 @@ workflow. What these tests hold is what would let either quietly stop being true
 
 - every `uses:` in every workflow is a 40-hex commit SHA with its tag in a trailing comment, so an
   action added by tag is red here and not a floating reference in CI;
-- the `test` job installs the three locks in one `pip install --require-hashes` and then the package
-  with no dependencies and no build isolation, and no `pip install` in ci.yml fetches from an index
-  without hashes except the one that is the red path of `no-forbidden-imports`;
+- the `test` job installs the three locks in one `pip install --require-hashes`, the image lock
+  first, and then the package with no dependencies and no build isolation, and no `pip install` in
+  any workflow, however it is spelled or wherever in a `run:` it sits, fetches from an index without
+  hashes except the one that is the red path of `no-forbidden-imports`;
 - requirements-test.lock.in says what pyproject.toml says (the dependencies and the `test` extra),
   because that list now lives in two places more than it did;
-- requirements-test.lock.txt pins what the `test` extra names, every pin with a hash, and repeats
-  every pin of requirements.lock.txt at the same version with the same hashes, so the packages
-  pytest runs against are the ones the image ships;
+- requirements-test.lock.txt pins what the `test` extra names, every pin with a hash, repeats
+  every pin of requirements.lock.txt at the same version with the same hashes, and pins nothing the
+  image's forbidden-imports guard refuses, so the packages pytest runs against are the ones the
+  image ships;
 - the config's `github-actions` block points at the workflows and is weekly, like the other two.
 
 Each comparison is between values read out of a file, and an empty read must not look like
@@ -37,12 +39,20 @@ TEST_LOCK = ROOT / "requirements-test.lock.txt"
 TEST_LOCK_IN = ROOT / "requirements-test.lock.in"
 BUILD_LOCK = ROOT / "requirements-build.lock.txt"
 
-# The one `pip install` in ci.yml that is not hash-checked on purpose: no-forbidden-imports puts
-# `websockets` into the environment to show its check goes red. Anything else that installs from an
-# index without hashes is a way back to testing something the image does not ship.
+FORBIDDEN_IMPORTS_CHECK = ROOT / "scripts" / "no-forbidden-imports-check.sh"
+
+# The one `pip install` in any workflow that is not hash-checked on purpose: no-forbidden-imports
+# puts `websockets` into the environment to show its check goes red. Anything else that installs
+# from an index without hashes is a way back to testing something the image does not ship.
 UNHASHED_INSTALLS = {"pip install --no-cache-dir websockets >/dev/null"}
 
+# `pip`, `pip3`, `python -m pip` and `uv pip` all reach this.
+PIP_INSTALL = re.compile(r"\bpip3?\s+install\b")
+# The package itself, with no dependencies of its own and nothing fetched to build it.
+PACKAGE_INSTALL = re.compile(r"pip install --no-deps --no-build-isolation (?:-e )?\.")
+
 SHA_PIN = re.compile(r"^[\w.-]+/[\w./-]+@[0-9a-f]{40}$")
+DOCKER_PIN = re.compile(r"^docker://\S+@sha256:[0-9a-f]{64}$")
 VERSION_COMMENT = re.compile(r"^v\d+(\.\d+)*$")
 
 
@@ -52,7 +62,7 @@ def _uses() -> list[tuple[Path, str, str]]:
     for workflow in sorted(WORKFLOWS.glob("*.y*ml")):
         for line in workflow.read_text().splitlines():
             match = re.match(r"^\s*-?\s*uses:\s*(\S+)[ \t]*(?:#[ \t]*(.*?))?[ \t]*$", line)
-            if match and not match.group(1).startswith(("./", "docker://")):
+            if match and not match.group(1).startswith("./"):
                 found.append((workflow, match.group(1), match.group(2) or ""))
     return found
 
@@ -64,9 +74,31 @@ def _jobs(text: str) -> dict[str, str]:
     return dict(zip(parts[1::2], parts[2::2]))
 
 
-def _commands(job: str) -> list[str]:
-    """The `run:` one-liners of a job, in order."""
-    return [m.group(1).strip() for m in re.finditer(r"^\s*-?\s*run:[ \t]+(\S.*)$", job, re.M)]
+def _commands(text: str) -> list[str]:
+    """The statements of every `run:` in the text, in order: a one-liner, or each line of a `|` or
+    `>` block, split at `&&`, `||` and `;`, with blank lines and comments left out."""
+    lines = text.splitlines()
+    statements: list[str] = []
+    number = 0
+    while number < len(lines):
+        match = re.match(r"^(\s*)(-\s+)?run:[ \t]*(.*)$", lines[number])
+        number += 1
+        if not match:
+            continue
+        key_column = len(match.group(1)) + len(match.group(2) or "")
+        rest = match.group(3).strip()
+        raw = [rest] if rest and rest[0] not in "|>" else []
+        if rest[:1] in ("|", ">"):
+            while number < len(lines) and (
+                not lines[number].strip() or len(lines[number]) - len(lines[number].lstrip()) > key_column
+            ):
+                raw.append(lines[number])
+                number += 1
+        for line in raw:
+            for statement in re.split(r"\s*(?:&&|\|\||;)\s*", line.strip()):
+                if statement and not statement.startswith("#"):
+                    statements.append(statement)
+    return statements
 
 
 def _requirement_lines(path: Path) -> list[str]:
@@ -106,6 +138,9 @@ def test_every_action_is_pinned_by_commit_sha_with_its_tag_beside_it():
     assert any(path == CI for path, _, _ in uses), "the walk found no `uses:` in ci.yml"
     for path, reference, comment in uses:
         where = f"{path.relative_to(ROOT)}: uses: {reference}"
+        if reference.startswith("docker://"):
+            assert DOCKER_PIN.match(reference), f"{where} is not pinned by a sha256 image digest"
+            continue
         assert SHA_PIN.match(reference), f"{where} is not pinned by a 40-hex commit SHA"
         assert VERSION_COMMENT.match(comment), (
             f"{where} has no `# vX.Y.Z` comment naming the tag it was resolved from "
@@ -120,11 +155,18 @@ def test_the_test_job_installs_the_locks_under_require_hashes_then_the_package_t
     jobs = _jobs(CI.read_text())
     assert "test" in jobs, "ci.yml has no `test` job"
     commands = _commands(jobs["test"])
-    hashed = [i for i, c in enumerate(commands) if c.startswith("pip install") and "--require-hashes" in c]
+    hashed = [i for i, c in enumerate(commands) if PIP_INSTALL.search(c) and "--require-hashes" in c]
     assert len(hashed) == 1, f"the test job has {len(hashed)} `pip install --require-hashes` steps, not one"
+    install = commands[hashed[0]]
     for lock in (LOCK.name, TEST_LOCK.name, BUILD_LOCK.name):
-        assert f"-r {lock}" in commands[hashed[0]], f"the test job's hashed install does not take {lock}"
-    package = [i for i, c in enumerate(commands) if c.startswith("pip install --no-deps --no-build-isolation")]
+        assert f"-r {lock}" in install, f"the test job's hashed install does not take {lock}"
+    # The image lock goes first. Given the same version at different hashes in two files, pip
+    # enforces the first file's (measured: with the test lock second, wrong hashes in it installed,
+    # exit 0; first, exit 1), so the image's hashes are the ones that count only in this order.
+    assert install.index(f"-r {LOCK.name}") < install.index(f"-r {TEST_LOCK.name}"), (
+        f"the test job's hashed install does not take {LOCK.name} before {TEST_LOCK.name}"
+    )
+    package = [i for i, c in enumerate(commands) if PACKAGE_INSTALL.fullmatch(c)]
     assert len(package) == 1, f"the test job has {len(package)} package installs with --no-deps --no-build-isolation"
     run = [i for i, c in enumerate(commands) if c.startswith("pytest")]
     assert len(run) == 1, f"the test job has {len(run)} pytest steps, not one"
@@ -141,19 +183,26 @@ def test_no_forbidden_imports_installs_what_the_image_ships_the_way_the_dockerfi
     assert "pip install --no-deps --no-build-isolation ." in commands
 
 
-def test_no_pip_install_in_ci_reads_pyproject_ranges_or_skips_hashes():
-    text = CI.read_text()
-    installs = [c for job in _jobs(text).values() for c in _commands(job) if "pip install" in c]
-    # The workflow installs things; finding none would make the loop below pass over nothing.
-    assert len(installs) >= 3, f"found {len(installs)} `pip install` steps in ci.yml, expected at least three"
-    for command in installs:
-        hashed = "--require-hashes" in command
-        no_index = command.startswith("pip install --no-deps --no-build-isolation")
-        assert hashed or no_index or command in UNHASHED_INSTALLS, (
-            f"`{command}` installs from an index with no hashes, so CI would test versions the image "
-            "does not ship (docs/adr/0019)"
-        )
-    assert '.[test]' not in text, "ci.yml installs the `test` extra from pyproject.toml's ranges again"
+def test_no_pip_install_in_any_workflow_reads_pyproject_ranges_or_skips_hashes():
+    workflows = sorted(WORKFLOWS.glob("*.y*ml"))
+    assert CI in workflows, "the walk found no ci.yml"
+    installs = []
+    for workflow in workflows:
+        text = workflow.read_text()
+        assert ".[test]" not in text, f"{workflow.name} installs the `test` extra from pyproject.toml's ranges"
+        for command in _commands(text):
+            if not PIP_INSTALL.search(command):
+                continue
+            installs.append(command)
+            assert "--require-hashes" in command or PACKAGE_INSTALL.fullmatch(command) or command in UNHASHED_INSTALLS, (
+                f"{workflow.name}: `{command}` installs from an index with no hashes, so CI would test "
+                "versions the image does not ship (docs/adr/0019)"
+            )
+    # The workflow installs things, and finding none would make the loop above pass over nothing.
+    assert len(installs) >= 4, f"found {len(installs)} `pip install` statements in the workflows, expected at least four"
+    # The exception has to be one that is there: a red path that was deleted leaves an allowance for
+    # the next unhashed install to hide behind.
+    assert UNHASHED_INSTALLS <= set(installs), "the one allowed unhashed install is not in any workflow"
 
 
 # --- the test lock says what pyproject says and repeats what the image ships ---------------------
@@ -187,6 +236,18 @@ def test_the_test_lock_repeats_every_pin_of_the_image_lock_at_the_same_version_a
             "so pytest would run against a version the image does not ship, and pip refuses the pair"
         )
         assert test[name][1] == hashes, f"{name}'s hashes differ between {LOCK.name} and {TEST_LOCK.name}"
+
+
+def test_the_test_lock_pins_nothing_the_image_is_forbidden_to_import():
+    guard = FORBIDDEN_IMPORTS_CHECK.read_text()
+    listed = re.search(r"for m in \(([^)]*)\) if importlib", guard)
+    assert listed, f"{FORBIDDEN_IMPORTS_CHECK.name} no longer lists its modules in the form this reads"
+    forbidden = re.findall(r'"([A-Za-z0-9_.-]+)"', listed.group(1))
+    assert len(forbidden) >= 2, f"read {forbidden} out of {FORBIDDEN_IMPORTS_CHECK.name}"
+    # pytest runs uvicorn in-process (tests/conftest.py): with one of these importable it would log a
+    # WebSocket client's address, the leak the guard exists to keep out of the image.
+    present = sorted(set(forbidden) & set(_locked(TEST_LOCK)))
+    assert not present, f"{TEST_LOCK.name} pins {present}, which the image's guard refuses"
 
 
 # --- the config points at the workflows ----------------------------------------------------------
