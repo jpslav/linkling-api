@@ -25,6 +25,7 @@ link deletes its counts. The CLI is a separate piece of work and is not here yet
 | `GET\|HEAD /<name>` | `302` to the long URL with `Cache-Control: no-store`. No credential, no cookie. |
 | `GET /-/api/links/<name>/stats` | `200 {"days": {"YYYY-MM-DD": count}}`: that link's count for each UTC day it was followed, and no row for a day nobody followed it. Needs the team key. `404` never existed, `410` deleted; an expired link answers `200` with the counts it kept. Reading it does not count as a follow. |
 | `GET /-/stats` | A plain HTML page: every link that has not been deleted, and its count for each UTC day. Needs the team key over HTTP Basic. |
+| `GET\|HEAD /-/privacy.json` | The privacy manifest: every table and column the service stores, why, and what deleting or expiring a link does to it. It is served byte for byte from `src/linkling/server/privacy/what-we-store.json`. No credential. `tests/test_ll015_privacy_manifest.py` fails if it disagrees with the schema or with what a delete or an expiry does (`docs/adr/0008` §c, `0020`). |
 
 `/-/stats` is opened in a browser, so it takes HTTP Basic rather than the Bearer header the
 API uses (`docs/adr/0006`): any user name without a colon in it, and the team key as the password. It lists every

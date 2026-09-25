@@ -34,6 +34,7 @@ them and decides the rest.
 | `GET /-/api/links/<name>/stats` ⚠️ Added 2026-09-24 | — | `200` `{"days": {"YYYY-MM-DD": count}}` | `401` no/wrong key, checked before the name; `404` never existed; `410` deleted; an expired link is `200` with its kept counts |
 | `GET /-/stats` ⚠️ Added 2026-09-24 | — (HTTP Basic: the team key as the password, with any user name that has no colon in it) | `200` a plain HTML page: every link that has not been deleted, with its count for each UTC day | `401` no/wrong key, with `WWW-Authenticate: Basic` |
 | `GET\|HEAD /<name>/` ⚠️ Added 2026-09-24 | — | as `GET\|HEAD /<name>` (ADR-0001e: `/<name>/` is treated as `/<name>`) | as `GET\|HEAD /<name>`; `/<name>//` is not a link (`404`) |
+| `GET\|HEAD /-/privacy.json` ⚠️ Added 2026-09-25 | — (no credential) | `200` `application/json`: the privacy manifest, byte for byte as shipped (ADR-0008 §c, ADR-0020) | none |
 
 > ⚠️ **Added 2026-09-24 (LL-027), after this ADR was accepted.** The three rows marked above
 > record routes `create_app` already registers, so that the table lists every route the service
@@ -41,7 +42,11 @@ them and decides the rest.
 > with no route. They are worded from `src/linkling/server/app.py`, and each answer they name was
 > checked against the application. The decision text and the four choices below are unchanged. `HEAD` on either `GET`-only route
 > (`/-/api/links/<name>/stats`, `/-/stats`) answers `405`, for the reason choice d gives.
-> `/-/privacy.json` is not listed: it does not exist yet.
+> `/-/privacy.json` was not listed then, because it did not exist yet.
+>
+> ⚠️ **Added 2026-09-25 (LL-015).** The `/-/privacy.json` row records the route LL-015 adds.
+> ADR-0008 §c chose its path and ADR-0020 its format; it is listed here so the table stays
+> complete, not decided here.
 
 Four choices inside that table are this ADR's own, each with the alternative recorded:
 
