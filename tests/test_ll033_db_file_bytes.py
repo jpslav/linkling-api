@@ -564,7 +564,10 @@ def test_a_foreign_open_read_does_not_hold_up_a_write(tmp_path):
     every request behind the service's lock for 5 s each (review round 2). It gives up at
     once instead, and the rewrite waits for a later write.
     """
+    import os
     import time
+
+    from linkling.server import db
 
     path = tmp_path / DB
     auth = {"Authorization": f"Bearer {KEY}"}
@@ -576,6 +579,13 @@ def test_a_foreign_open_read_does_not_hold_up_a_write(tmp_path):
             assert client.post("/-/api/links", json=body, headers=auth).status_code == 201
 
         create("held")
+        assert client.get("/held").status_code == 302
+        # Enough pages that a rewrite -- a copy of every page -- dwarfs three small writes.
+        for i in range(24):
+            body = {"name": f"bulk{i:02d}", "url": "https://example.com/" + "x" * 1900}
+            assert client.post("/-/api/links", json=body, headers=auth).status_code == 201
+        head = path.read_bytes()[:100]
+        page_size, pages = struct.unpack(">H", head[16:18])[0], struct.unpack(">I", head[28:32])[0]
         reader = sqlite3.connect(path, isolation_level=None)
         reader.execute("BEGIN")
         reader.execute("SELECT count(*) FROM links").fetchall()
@@ -585,11 +595,29 @@ def test_a_foreign_open_read_does_not_hold_up_a_write(tmp_path):
             assert client.get("/held").status_code == 302
             create("aaa-late")  # sorts first, so a cell left where it landed shows
             elapsed = time.monotonic() - started
+            # Put off, not done into a WAL the reader pins, where a rewrite is a copy of
+            # every page that cannot be emptied until the reader ends.
+            owed = os.path.realpath(path) in db._deferred
+            frames = max(0, (path.parent / WAL).stat().st_size - 32) // (page_size + 24)
         finally:
             reader.execute("COMMIT")
             reader.close()
         assert elapsed < 2.5, f"three writes took {elapsed:.1f}s with a foreign read open"
-        # With the reader gone, the next write -- in place, on its own no rewrite -- does
-        # the rewrite that was put off.
-        assert client.get("/held").status_code == 302
-    _assert_laid_out_by_content_alone(_copy(path.parent), tmp_path / "inspect", "after the reader ended")
+        assert owed, "the rewrite was not put off while a foreign read was open"
+        assert frames < pages // 2, f"the -wal holds {frames} frames of a {pages}-page file: a rewrite went in"
+        # With the reader gone, the next request -- a read -- does the rewrite that was put
+        # off, so the file does not wait for the next write.
+        assert client.get("/-/api/links/nosuch/stats", headers=auth).status_code == 404
+        after_read = _copy(path.parent)
+    # Already rewritten: rewriting a copy of it again changes no byte. (The tree spans
+    # several pages here, so the page-shape check does not apply.)
+    again = tmp_path / "again" / DB
+    again.parent.mkdir()
+    again.write_bytes(_db_bytes(after_read))
+    conn = db.connect(again)
+    try:
+        db.settle(conn, relayout=True)
+    finally:
+        conn.close()
+    differing = sum(x != y for x, y in zip(after_read[DB], again.read_bytes()))
+    assert differing == 0, f"{differing} bytes change when the file is rewritten again"

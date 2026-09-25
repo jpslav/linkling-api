@@ -134,29 +134,44 @@ def settle(conn: sqlite3.Connection, *, relayout: bool) -> None:
 
     A checkpoint that another connection's open read holds up comes back busy and leaves
     the frames: measured as ``(1, 1, 0)`` and a 4,152-byte ``-wal``. The service holds one
-    connection at a time (``app.get_conn``), so only a process outside it can cause that,
-    and the next write's checkpoint takes the frames with it.
+    connection at a time (``app.get_conn``), so only a process outside it can cause that.
+    The rewrite is then owed (``_deferred``) until one lands: a rewrite that raises stays
+    owed too, and ``settle_owed`` lets the next request of any kind pay it.
     """
     path = conn.execute("PRAGMA database_list").fetchone()["file"]
     relayout = relayout or path in _deferred
-    if relayout and not _checkpoint(conn):
-        # Another process holds a read open. A rewrite now would put a copy of every page
-        # into a WAL that cannot be emptied until it ends: 2.4 MB more per write, measured.
-        # The next write rewrites instead, whatever it is.
-        _deferred.add(path)
-        return
     if relayout:
+        # Owed from here until a rewrite has landed, so a raise below leaves it owed.
+        _deferred.add(path)
+        if not _checkpoint(conn):
+            # Another process holds a read open. A rewrite now would put a copy of every
+            # page into a WAL that cannot be emptied until it ends: 2.4 MB more per write,
+            # measured. A later request rewrites instead.
+            return
         canonicalise(conn)
     if not _checkpoint(conn):
-        if relayout:
-            _deferred.add(path)
         return
     if relayout:
         _reset_change_counter(conn)
         _deferred.discard(path)
 
 
-#: Database files whose last rewrite was put off because another process held a read open.
+def settle_owed(conn: sqlite3.Connection) -> None:
+    """Do a rewrite an earlier request had to put off, on whatever request comes next.
+
+    ``app.get_conn`` calls this before it closes every connection, reads included. Without
+    it an owed rewrite waited for the next write: once the foreign reader had gone, a
+    read's closing checkpoint moved the un-rewritten pages into ``linkling.db`` and they
+    stayed there, however long the next write took (review round 3, measured).
+    """
+    if not _deferred:
+        return
+    if conn.execute("PRAGMA database_list").fetchone()["file"] in _deferred:
+        settle(conn, relayout=False)
+
+
+#: Database files owed a rewrite: one was put off because another process held a read
+#: open, or it raised. Cleared only when a rewrite has landed.
 _deferred: set[str] = set()
 
 

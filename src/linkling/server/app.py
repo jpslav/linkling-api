@@ -347,7 +347,12 @@ def create_app(config: Config | None = None) -> FastAPI:
             try:
                 yield conn
             finally:
-                await run_in_threadpool(conn.close)
+                try:
+                    await run_in_threadpool(db.settle_owed, conn)
+                except sqlite3.Error:
+                    pass  # still owed (db._deferred); the next request tries again
+                finally:
+                    await run_in_threadpool(conn.close)
 
     def body_within_limit(request: Request) -> None:
         """Answer 413 for a chunked body the middleware had to cut off.
