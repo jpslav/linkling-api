@@ -23,8 +23,8 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: pip install --require-hashes -r requirements.lock.txt -r requirements-test.lock.txt -r requirements-build.lock.txt
@@ -39,7 +39,7 @@ jobs:
     name: compose
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/compose-smoke.sh
 
   # The service sends nothing to anyone but the client (ADR-0009, scripts/no-third-party-check.sh).
@@ -53,7 +53,7 @@ jobs:
     name: no-third-party
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/no-third-party-check.sh --api-only
       - name: the check fails a service that fetches its target on create
         run: |
@@ -82,8 +82,8 @@ jobs:
     name: no-forbidden-imports
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: pip install --require-hashes -r requirements.lock.txt -r requirements-build.lock.txt
@@ -120,7 +120,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: the whole check passes against the stand-in site
         run: LINKLING_WEB_DIR=tests/fixtures/standin-site scripts/no-third-party-check.sh
       - name: the check fails a site that loads an external stylesheet
