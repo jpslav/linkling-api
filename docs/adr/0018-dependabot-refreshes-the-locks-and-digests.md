@@ -84,9 +84,23 @@ checkout, on 2026-09-25, against this repo and against a copy of it whose locks 
   `compose` and `no-third-party` jobs is what runs the websockets/wsproto guard against a new lock
   (the `Dockerfile`'s build step), because the `test` and `no-forbidden-imports` jobs install
   `pyproject.toml`'s ranges (`pip install -e ".[test]"` in `ci.yml`), not the lock.
+  > ⚠️ **Superseded 2026-09-25 — see ADR-0019 (LL-030, api #20).** Two claims in this
+  > Consequence no longer hold. The `test` and `no-forbidden-imports` jobs do not install
+  > `pyproject.toml`'s ranges: in `.github/workflows/ci.yml`, `test` installs the three lock
+  > files under `pip install --require-hashes`, and `no-forbidden-imports` installs the image lock
+  > and the build lock the same way, so that job also runs the websockets/wsproto guard against
+  > the locked set. And a refresh is up to three PRs a week, not two: `.github/dependabot.yml` has
+  > a third block, `github-actions`. The text above is left as written; this note was added by
+  > LL-032.
 - pytest never runs with the locked versions installed. A lock PR is exercised by the image build,
   the smoke script and the no-third-party check; the test suite only reads the lock files'
   structure (`tests/test_ll024_pins_refresh.py`). That gap is recorded, not closed here.
+  > ⚠️ **Superseded 2026-09-25 — see ADR-0019 (LL-030, api #20).** The gap is closed. The `test`
+  > job in `.github/workflows/ci.yml` installs `requirements.lock.txt`,
+  > `requirements-test.lock.txt` and `requirements-build.lock.txt` under
+  > `pip install --require-hashes` before `pytest -q`, so pytest runs with the locked versions
+  > installed and a lock PR is exercised by the test suite as well. The text above is left as
+  > written; this note was added by LL-032.
 - The `pydantic` and `pydantic-core` style of coupling is handled by the pip-compile updater, but
   it lagged the newest releases: a full `uv pip compile --upgrade` on the day of measurement was
   one release ahead on two packages (`starlette` 1.7.0 against 1.6.0, `uvicorn` 0.54.0 against
