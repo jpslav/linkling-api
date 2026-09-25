@@ -103,25 +103,29 @@ start() {
 # timeout. What curl printed decides it: curl prints 000 when no HTTP status came back. The exit
 # status only names the reason, and nothing overwrites $answer when it is non-zero, because a
 # status curl did print survives a non-zero exit (a body cut short, say) and `|| answer=000`
-# would have discarded it. `ask -o <file> ...` keeps the reply body in <file>; without it the
-# body is discarded.
+# would have discarded it. `ask -o <file> ...` keeps the reply body in <file>, and then a body
+# that did not arrive whole is `blind` too; without `-o` the body is discarded.
 ask() {
     local out=/dev/null step fmt rc why
     if [ "$1" = -o ]; then out="$2"; shift 2; fi
     step="$1" fmt="$2"
     shift 2
     if answer="$(curl -s --max-time "$max_time" -o "$out" -w "$fmt" "$@")"; then rc=0; else rc=$?; fi
-    case "$answer" in
-        ""|000*)
-            case "$rc" in
-                7) why="curl could not connect" ;;
-                28) why="curl timed out after ${max_time}s" ;;
-                52) why="the connection closed with no reply" ;;
-                56) why="receiving the reply failed" ;;
-                *) why="curl exit status $rc" ;;
-            esac
-            blind "no answer from $base while $step ($why), so the run went no further" ;;
+    case "$rc" in
+        0) why="" ;;
+        7) why="curl could not connect" ;;
+        28) why="curl timed out after ${max_time}s" ;;
+        52) why="the connection closed with no reply" ;;
+        56) why="receiving the reply failed" ;;
+        *) why="curl exit status $rc" ;;
     esac
+    case "$answer" in
+        ""|000*) blind "no answer from $base while $step ($why), so the run went no further" ;;
+    esac
+    # A kept body is judged by what it says, so one cut short is not a reply that was seen.
+    if [ "$out" != /dev/null ] && [ "$rc" != 0 ]; then
+        blind "the reply while $step did not arrive whole ($why), so the run went no further"
+    fi
 }
 
 # Follows the canary once and leaves "<status> <Location>" in $answer.

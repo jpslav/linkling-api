@@ -89,7 +89,7 @@ def schema_columns(conn: sqlite3.Connection) -> set[tuple[str, str]]:
     return {
         (table, row[1])
         for table in tables
-        for row in conn.execute(f"PRAGMA table_info({table})")
+        for row in conn.execute(f"PRAGMA table_xinfo({table})")
     }
 
 
