@@ -1,7 +1,7 @@
 # ADR-0018 — Dependabot refreshes the locks and base-image digests, with a .in file as the main lock's input
 
-- Status: Proposed
-- Approver: (pending)
+- Status: Accepted
+- Approver: pm-3
 - Date: 2026-09-25
 
 ## Context
@@ -101,3 +101,9 @@ checkout, on 2026-09-25, against this repo and against a copy of it whose locks 
 - The list of top-level requirements now lives in two places for the main lock (`pyproject.toml`
   and the `.in`), held together by a test rather than by construction. The build lock is refreshed
   by a different Dependabot updater from the main one, which is why it is a pin, not a set.
+
+## Decision record
+
+Accepted 2026-09-25 by `pm-3`, the program manager, under the 2026-09-22 ruling in `company/DECISIONS.md` of the program repo ("What reaches the owner is user-visible impact, not cost to undo"): how the locks and digests are kept current is not something a user of Linkling perceives, and the weekly PR it produces is the manager's to merge. Proposed since 2026-09-25. Checked against `main` at `42444f5` before accepting: `.github/dependabot.yml` has a `pip` block on `/` with the group `python-locks` and a `docker` block over the three Dockerfile directories with `python`'s minor and major moves ignored, `requirements.lock.in` sits beside `requirements.lock.txt`, and there is no `requirements-build.lock.in`.
+
+Two Consequences above describe `ci.yml` as it was on `main` when this was accepted, and no longer hold after LL-030 (in the same pull request): the `test` and `no-forbidden-imports` jobs no longer install `pyproject.toml`'s ranges, and the `test` job installs from the locks under `pip install --require-hashes`, so pytest does run with the locked versions installed. The Decision above lists two blocks of the config, and it now has a third, `github-actions`. `docs/adr/0019-ci-tests-the-locks-and-pins-its-actions.md` records both. Recorded by the `w-LL-030` session (LL-031) in jpslav/linkling-api#20.

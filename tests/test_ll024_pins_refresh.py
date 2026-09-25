@@ -114,9 +114,10 @@ def _pins(path: Path) -> dict[str, int]:
 # --- the config covers what exists --------------------------------------------------------------
 
 
-def test_the_config_has_the_two_blocks_it_is_read_for():
+def test_the_config_has_the_three_blocks_it_is_read_for():
     assert re.search(r"^version: 2$", CONFIG.read_text(), re.M)
-    assert set(_blocks()) == {"pip", "docker"}
+    # github-actions is LL-030's (tests/test_ll030_locked_ci.py holds what it must say).
+    assert set(_blocks()) == {"pip", "docker", "github-actions"}
 
 
 def test_every_dockerfile_is_under_a_docker_directories_entry():

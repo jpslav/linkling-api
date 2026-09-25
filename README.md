@@ -132,26 +132,35 @@ instead of ready.
 
 ### Keeping the pins fresh
 
-The image's Python dependencies (`requirements.lock.txt` and `requirements-build.lock.txt`) and its
-base image (`python:3.12-slim`, pinned by digest in three Dockerfiles: the service's, the
-observer that `scripts/no-third-party-check.sh` builds, and the stand-in site's) go stale on their
-own: a security release reaches no deployer until someone re-locks and re-pins. Dependabot does
-that (`.github/dependabot.yml`, `docs/adr/0018-dependabot-refreshes-the-locks-and-digests.md`).
-It is set to open, on Mondays, at most two pull requests, each only when something moved: one for
-the lock files, and one that moves the three digests together. CI's `pull_request` trigger
-(`.github/workflows/ci.yml`) covers them like any other pull request, and the image build in the
-`compose` and `no-third-party` jobs is what runs the websockets/wsproto guard
-(`scripts/no-forbidden-imports-check.sh`, called from the `Dockerfile`) against the new lock. A
-green one is merged; a red one is the exception to look at. Nobody has to re-lock or re-pin by hand.
+The image's Python dependencies (`requirements.lock.txt` and `requirements-build.lock.txt`), the
+test environment's (`requirements-test.lock.txt`), its base image (`python:3.12-slim`, pinned by
+digest in three Dockerfiles: the service's, the observer that `scripts/no-third-party-check.sh`
+builds, and the stand-in site's) and the GitHub Actions in `.github/workflows` (pinned by commit
+SHA) go stale on their own: a security release reaches no deployer until someone re-locks and
+re-pins. Dependabot does that (`.github/dependabot.yml`,
+`docs/adr/0018-dependabot-refreshes-the-locks-and-digests.md`,
+`docs/adr/0019-ci-tests-the-locks-and-pins-its-actions.md`). It is set to open, on Mondays, at most
+three pull requests, each only when something moved: one for the lock files, one that moves the three
+digests together, and one for the actions. CI's `pull_request` trigger (`.github/workflows/ci.yml`)
+covers them like any other pull request. The `test` job runs pytest in an environment installed from
+the locks under `pip install --require-hashes`, so a lock PR is exercised by the test suite and not
+only by the image build. The websockets/wsproto guard (`scripts/no-forbidden-imports-check.sh`)
+runs against the new lock in the image build of the `compose` and `no-third-party` jobs (it is called
+from the `Dockerfile`) and in the `no-forbidden-imports` job. A green one is merged; a red one is the exception to look at. Nobody has to
+re-lock or re-pin by hand.
 
-Two things make that work, and tests fail when either breaks. `requirements.lock.in` sits beside
-`requirements.lock.txt` and says what `pyproject.toml` says: that file is what makes Dependabot
+Two things make that work, and tests fail when either breaks. `requirements.lock.in` and
+`requirements-test.lock.in` sit beside their `.txt` and say what `pyproject.toml` says (the
+dependencies, and the dependencies plus the `test` extra): those files are what make Dependabot
 re-resolve the whole set instead of bumping one pinned line at a time, which leaves pins that
 cannot be installed together. (`requirements-build.lock.txt` has no such file on purpose; its
-header says why.) And every Dockerfile is listed in the config. A third test fails if a refresh PR
-leaves a lock without the pins it exists for, or a pin without its hashes. Dependabot is held to
-the `3.12-slim` tag: it refreshes that tag's digest and never proposes another Python. To re-lock
-by hand, use the command at the top of each lock file.
+header says why.) And every Dockerfile is listed in the config. Other tests fail if a refresh PR
+leaves a lock without the pins it exists for, or a pin without its hashes, if the test lock names
+another version or hash of anything the image lock pins, or if a workflow's `uses:` is not a commit
+SHA with its tag beside it. Dependabot is held to the `3.12-slim` tag: it refreshes that tag's
+digest and never proposes another Python. To re-lock by hand, use the command at the top of each
+lock file, and re-lock the test lock after the image lock: its command takes the image lock as a
+constraint, and the two must agree.
 
 ### Where the database lives
 

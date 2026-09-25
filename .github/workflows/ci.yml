@@ -5,16 +5,30 @@ on:
   push:
     branches: [main]
 
+# Every action is pinned by commit SHA, with the tag it was resolved from beside it; the
+# `github-actions` block of .github/dependabot.yml is set to open the PR that moves a pin (LL-030,
+# ADR-0019).
+
 jobs:
+  # pytest runs in the environment the image ships plus the test-only packages, installed under
+  # --require-hashes (LL-030, ADR-0019), not in whatever pyproject.toml's ranges resolve to today.
+  # One pip run takes the three locks, as the Dockerfile's takes its two: requirements.lock.txt is
+  # the shipped set and goes first, because given one version at two sets of hashes pip enforces
+  # the first file's; requirements-test.lock.txt adds pytest and httpx and repeats the shipped set,
+  # so pip refuses the pair if they name two versions of one package, and
+  # tests/test_ll030_locked_ci.py holds that their hashes agree; requirements-build.lock.txt is the
+  # build backend, which is what lets the package install below use --no-build-isolation and fetch
+  # nothing unhashed.
   test:
     name: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
-      - run: pip install -e ".[test]"
+      - run: pip install --require-hashes -r requirements.lock.txt -r requirements-test.lock.txt -r requirements-build.lock.txt
+      - run: pip install --no-deps --no-build-isolation -e .
       - run: pytest -q
 
   # The compose stack's service, started from nothing on Linux: it answers, a link survives
@@ -25,7 +39,7 @@ jobs:
     name: compose
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: scripts/compose-smoke.sh
 
   # The service sends nothing to anyone but the client (ADR-0009, scripts/no-third-party-check.sh).
@@ -39,7 +53,7 @@ jobs:
     name: no-third-party
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: scripts/no-third-party-check.sh --api-only
       - name: the check fails a service that fetches its target on create
         run: |
@@ -61,15 +75,19 @@ jobs:
   # --no-access-log does not touch. The Dockerfile also runs this same script as a build step,
   # so a real image with the leak fails to build; this job is the fast, no-rebuild copy that
   # keeps the red path exercised on every PR, mirroring no-third-party's --mutate step above.
+  # It looks at the set the image ships, installed the way the Dockerfile installs it (LL-030): the
+  # two locks under --require-hashes, then the package with no dependencies of its own. It does
+  # not need pytest, so requirements-test.lock.txt is not part of it.
   no-forbidden-imports:
     name: no-forbidden-imports
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
-      - run: pip install -e ".[test]"
+      - run: pip install --require-hashes -r requirements.lock.txt -r requirements-build.lock.txt
+      - run: pip install --no-deps --no-build-isolation .
       - run: scripts/no-forbidden-imports-check.sh
       - name: the check fails when a forbidden dependency is importable
         run: |
@@ -102,7 +120,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: the whole check passes against the stand-in site
         run: LINKLING_WEB_DIR=tests/fixtures/standin-site scripts/no-third-party-check.sh
       - name: the check fails a site that loads an external stylesheet

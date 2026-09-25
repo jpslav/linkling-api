@@ -1,8 +1,8 @@
 # ADR-0014 — daily_counts is a WITHOUT ROWID table keyed by (link, UTC day), its counts die with their link by trigger, and a follow is counted by one guarded upsert
 
-- Status: Proposed
-- Approver: (pending)
-- Date: 2026-09-23
+- Status: Accepted
+- Approver: pm-3
+- Date: 2026-09-25
 
 ## Context
 
@@ -59,6 +59,8 @@ deleted.
 
 ## Left open: what the database file's raw bytes keep
 
+> **Still open as of 2026-09-25, and not accepted with the rest of this ADR.** This is the owner's question, in the program repo at `products/linkling/STAKEHOLDER-QUEUE.md` under "Does the privacy promise cover the database file's raw bytes, or only what the service can read?" (asked 2026-09-23, blocks LL-012). When it is answered, the answer is recorded here.
+
 This ADR guarantees what SQL can read. ADR-0004's "nothing finer than a day can ever be
 reconstructed" could also be read to cover the file's raw bytes: a copy of `linkling.db`,
 a backup or a volume snapshot. At that level, SQLite keeps more than the schema shows.
@@ -84,3 +86,9 @@ These are the sites, found in this PR's review (round 2) and confirmed by probes
 Whether the promise covers the file's raw bytes decides what the privacy page (LL-012)
 may say. It is a promise to people who never agreed to anything, so the owner decides it.
 This ADR does not.
+
+## Decision record
+
+Accepted 2026-09-25 by `pm-3`, the program manager, under the 2026-09-22 ruling in `company/DECISIONS.md` of the program repo ("What reaches the owner is user-visible impact, not cost to undo"): the counts table's row storage, day encoding, retention trigger and increment statement are not something a user of Linkling perceives, so they are Claude's, recorded here. Proposed since 2026-09-23. Checked against `main` at `42444f5` before accepting: `src/linkling/server/migrations/0002_daily_counts.sql` declares `daily_counts` `WITHOUT ROWID` with `PRIMARY KEY (link_id, day)`, the two `CHECK`s and the trigger `daily_counts_die_with_their_link`, and `_INCREMENT` in `src/linkling/server/counts.py` is the one guarded upsert. The trigger also carries `WHEN NEW.deleted_at IS NOT NULL`, a detail the table above leaves out.
+
+**Not accepted: "Left open".** That section is the owner's open question, whether the privacy promise covers the database file's raw bytes. It is in `products/linkling/STAKEHOLDER-QUEUE.md` of the program repo (asked 2026-09-23, blocks LL-012). Accepting the rest of this ADR does not answer it, and neither does this record. Recorded by the `w-LL-030` session (LL-031) in jpslav/linkling-api#20.

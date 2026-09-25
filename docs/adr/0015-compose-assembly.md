@@ -1,8 +1,8 @@
 # ADR-0015 — How the compose file is assembled: the site's source, the service's user, logging, and origins
 
-- Status: Proposed
-- Approver: (pending)
-- Date: 2026-09-23
+- Status: Accepted
+- Approver: pm-3
+- Date: 2026-09-25
 
 ## Context
 
@@ -107,3 +107,7 @@ which is a one-line compose change and does not reopen this record.
   it.
 - Neither container logs a visitor's address. A proxy in front of them is the deployer's to
   configure.
+
+## Decision record
+
+Accepted 2026-09-25 by `pm-3`, the program manager, under the 2026-09-22 ruling in `company/DECISIONS.md` of the program repo ("What reaches the owner is user-visible impact, not cost to undo"): where the site's image is built from, which uid the service runs as, what the site's nginx logs and how the two origins share a host are not something a user of Linkling perceives. Proposed since 2026-09-23. Checked against `main` at `42444f5` before accepting: `compose.yaml`'s `web` service builds `${LINKLING_WEB_DIR:-../linkling-web}` and mounts `deploy/nginx-privacy.conf` (`access_log off; log_not_found off; error_log /dev/null;`), and `deploy/entrypoint.sh` `chown`s to uid 10001 and then `exec setpriv`s to it. One name the deploy-time table above predates: `LINKLING_BIND_ADDR`, which ADR-0017 added to both `ports:` lines of `compose.yaml`. Recorded by the `w-LL-030` session (LL-031) in jpslav/linkling-api#20.
