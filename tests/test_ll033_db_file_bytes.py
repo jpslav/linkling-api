@@ -266,11 +266,17 @@ _PAGE_HEADER = {2: 12, 5: 12, 10: 8, 13: 8}
 def _misplaced(data: bytes, roots: dict[str, int]) -> tuple[dict[str, int], list[str]]:
     """Walk every b-tree over raw bytes. Returns cells seen per tree and what is out of place.
 
-    A page written in key order, all at once -- which is what ``VACUUM`` does -- has its
-    cells packed from the end of the page in key order, no freeblock and no fragmented
-    bytes, and the file has no free pages. A page that took its rows one at a time holds
-    them in arrival order; a page a cell left or grew out of holds a freeblock. Either is a
-    record of what happened when, which is what this looks for.
+    A tree that fits in one page, written in key order all at once -- which is what
+    ``VACUUM`` does -- has its cells packed from the end of the page in key order, no
+    freeblock and no fragmented bytes, and the file has no free pages. A page that took its
+    rows one at a time holds them in arrival order; a page a cell left or grew out of holds
+    a freeblock. Either is a record of what happened when, which is what this looks for.
+
+    Only for single-page trees. ``VACUUM`` output for a tree of several pages does not
+    have this shape (review round 2 measured freeblocks and out-of-order cells in a
+    correctly rewritten 600 KB file), so an interior page is BLIND here, never a pass or a
+    fail. ``test_a_database_of_many_pages_is_the_same_whatever_order_it_was_written_in``
+    covers that size by comparing bytes instead.
     """
     page_size = struct.unpack(">H", data[16:18])[0]
     page_size = 65536 if page_size == 1 else page_size
@@ -300,11 +306,12 @@ def _misplaced(data: bytes, roots: dict[str, int]) -> tuple[dict[str, int], list
                 problems.append(f"{tree} page {page}: freeblock at {freeblock}, {fragmented} fragmented bytes")
             if offsets != sorted(offsets, reverse=True):
                 problems.append(f"{tree} page {page}: cells out of key order")
-            if kind in (2, 5):  # interior: each cell starts with its left child's page number
-                pending += [struct.unpack(">I", data[base + o : base + o + 4])[0] for o in offsets]
-                pending.append(struct.unpack(">I", data[header + 8 : header + 12])[0])
-            else:
-                cells_seen[tree] += cells
+            if kind in (2, 5):
+                pytest.fail(
+                    f"DB-BYTES BLIND: {tree} spans several pages (page {page} is interior); "
+                    "the page-shape check covers single-page trees only"
+                )
+            cells_seen[tree] += cells
     return cells_seen, problems
 
 
@@ -460,3 +467,129 @@ def test_leak_4_a_deleted_links_target_is_nowhere_in_the_files(copies, case):
         pieces = {target[i : i + WINDOW] for i in range(len(target) - WINDOW + 1)}
         holding = sorted({name for name, blob in copy.items() for p in pieces if p in blob})
         assert not holding, f"history {which}: pieces of the deleted target in {holding}"
+
+
+def test_a_database_of_many_pages_is_the_same_whatever_order_it_was_written_in(tmp_path):
+    """Two histories big enough that every table spans several pages leave the same bytes.
+
+    Driven through the service's own write functions, one connection per write as a
+    request would hold, so each write settles the way it does in the service. The
+    histories differ in the order of every day's follows, in how often a since-deleted
+    link was followed and in its target.
+    """
+    from linkling.server import db
+
+    names = [f"n{i:03d}" for i in range(150)]
+    days = ["2026-09-01", "2026-09-02", "2026-09-03"]
+    rnd = random.Random(33)
+    content = {(n, d): rnd.choice([1, 1, 2, 3]) for n in names for d in days}
+
+    def build(which: str, seed: int) -> bytes:
+        path = tmp_path / which / DB
+        path.parent.mkdir()
+
+        def write(action, *args):
+            conn = db.connect(path)
+            try:
+                return action(conn, *args)
+            finally:
+                conn.close()
+
+        conn = db.connect(path)
+        db.migrate(conn)
+        db.settle(conn, relayout=True)
+        conn.close()
+        for n in names:
+            write(lambda c, n=n: links.create(c, name=n, target=f"https://example.com/{n}"))
+        write(lambda c: links.create(c, name="gone", target=GONE_TARGET[which]))
+        order = random.Random(seed)
+        for day in days:
+            follows = [n for (n, d), k in content.items() if d == day for _ in range(k)]
+            if day == days[1]:
+                follows += ["gone"] * GONE_FOLLOWS[which]
+            order.shuffle(follows)
+            counts._epoch_seconds = lambda day=day: NOON.get(day, NOON[DAYS[0]])
+            for n in follows:
+                assert write(counts.record_follow, n)
+            if day == days[1]:
+                write(links.delete, "gone")
+        return path.read_bytes()
+
+    saved_clock, saved_now = counts._epoch_seconds, links._now
+    links._now = lambda: "2026-08-31T00:00:00Z"  # created_at and deleted_at, the same in both
+    try:
+        a, b = build("A", 1), build("B", 2)
+    finally:
+        counts._epoch_seconds, links._now = saved_clock, saved_now
+
+    for which, data in (("A", a), ("B", b)):
+        copy = {DB: data}
+        roots = dict(_inspect(copy, tmp_path / f"i{which}", "SELECT name, rootpage FROM sqlite_schema WHERE rootpage > 0"))
+        page_size = struct.unpack(">H", data[16:18])[0]
+        for tree in ("links", "daily_counts"):
+            base = (roots[tree] - 1) * page_size
+            if data[base] not in (2, 5):
+                pytest.fail(f"DB-BYTES BLIND: {tree} fits in one page in history {which}; nothing here is multi-page")
+        assert _inspect(copy, tmp_path / f"i{which}", "PRAGMA integrity_check") == [("ok",)]
+    differing = sum(x != y for x, y in zip(a, b)) + abs(len(a) - len(b))
+    assert differing == 0, f"{differing} of {len(a)} bytes differ between the two histories"
+
+
+def test_every_database_route_lets_its_connection_go_before_the_response_is_sent(tmp_path):
+    """One connection at a time is only safe if nobody can hold it by not reading.
+
+    ``get_conn`` holds the service's lock from open to close. With FastAPI's default
+    dependency scope that lasted until the response had been written to the socket, so a
+    client that stopped reading froze every database route (review round 2, measured).
+    """
+    from fastapi.routing import APIRoute
+
+    app = create_app(Config(api_key=KEY, db_path=str(tmp_path / DB)))
+    found = {
+        (route.path, dep.scope)
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        for dep in route.dependant.dependencies
+        if getattr(dep.call, "__name__", "") == "get_conn"
+    }
+    if not found:
+        pytest.fail("DB-BYTES BLIND: no route takes get_conn")
+    assert {scope for _, scope in found} == {"function"}, sorted(found)
+
+
+def test_a_foreign_open_read_does_not_hold_up_a_write(tmp_path):
+    """A process outside the service holding a read open costs a write nothing it waits on.
+
+    The checkpoint cannot pass that reader, and waiting the busy timeout for it stalled
+    every request behind the service's lock for 5 s each (review round 2). It gives up at
+    once instead, and the rewrite waits for a later write.
+    """
+    import time
+
+    path = tmp_path / DB
+    auth = {"Authorization": f"Bearer {KEY}"}
+    app = create_app(Config(api_key=KEY, db_path=str(path)))
+    with TestClient(app, follow_redirects=False) as client:
+
+        def create(name):
+            body = {"name": name, "url": f"https://example.com/{name}"}
+            assert client.post("/-/api/links", json=body, headers=auth).status_code == 201
+
+        create("held")
+        reader = sqlite3.connect(path, isolation_level=None)
+        reader.execute("BEGIN")
+        reader.execute("SELECT count(*) FROM links").fetchall()
+        try:
+            started = time.monotonic()
+            assert client.get("/held").status_code == 302
+            assert client.get("/held").status_code == 302
+            create("aaa-late")  # sorts first, so a cell left where it landed shows
+            elapsed = time.monotonic() - started
+        finally:
+            reader.execute("COMMIT")
+            reader.close()
+        assert elapsed < 2.5, f"three writes took {elapsed:.1f}s with a foreign read open"
+        # With the reader gone, the next write -- in place, on its own no rewrite -- does
+        # the rewrite that was put off.
+        assert client.get("/held").status_code == 302
+    _assert_laid_out_by_content_alone(_copy(path.parent), tmp_path / "inspect", "after the reader ended")

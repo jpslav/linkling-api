@@ -137,11 +137,46 @@ def settle(conn: sqlite3.Connection, *, relayout: bool) -> None:
     connection at a time (``app.get_conn``), so only a process outside it can cause that,
     and the next write's checkpoint takes the frames with it.
     """
+    path = conn.execute("PRAGMA database_list").fetchone()["file"]
+    relayout = relayout or path in _deferred
+    if relayout and not _checkpoint(conn):
+        # Another process holds a read open. A rewrite now would put a copy of every page
+        # into a WAL that cannot be emptied until it ends: 2.4 MB more per write, measured.
+        # The next write rewrites instead, whatever it is.
+        _deferred.add(path)
+        return
     if relayout:
         canonicalise(conn)
-    busy, frames, _done = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-    if relayout and (busy, frames) == (0, 0):
+    if not _checkpoint(conn):
+        if relayout:
+            _deferred.add(path)
+        return
+    if relayout:
         _reset_change_counter(conn)
+        _deferred.discard(path)
+
+
+#: Database files whose last rewrite was put off because another process held a read open.
+_deferred: set[str] = set()
+
+
+def _checkpoint(conn: sqlite3.Connection) -> bool:
+    """``wal_checkpoint(TRUNCATE)``, without waiting. True when the ``-wal`` is left empty.
+
+    With the connection's usual busy timeout the checkpoint waits the whole 5 s for an open
+    reader before giving up, while the service's lock queues every other request behind
+    it: 8 requests took 21.5 s against a foreign ``BEGIN; SELECT`` (review round 2). A
+    reader the checkpoint cannot pass is not going to end on this request's account, so it
+    gives up at once and the next write tries again.
+    """
+    conn.execute("PRAGMA busy_timeout=0")
+    try:
+        busy, frames, _done = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    finally:
+        conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+    # Outside WAL mode (``_enable_wal`` lost its race) SQLite answers (0, -1, -1): there is
+    # no WAL to empty, which is not a reason to put off a rewrite.
+    return busy == 0 and frames in (0, -1)
 
 
 def canonicalise(conn: sqlite3.Connection) -> None:

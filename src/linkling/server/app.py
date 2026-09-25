@@ -335,6 +335,12 @@ def create_app(config: Config | None = None) -> FastAPI:
         waiting for it holds no worker thread, so a full threadpool cannot starve the
         request that holds it. Opening and closing still run in the threadpool, as they
         did when this dependency was synchronous.
+
+        Every route takes it with ``scope="function"``, so the connection is closed and the
+        lock released when the handler returns, before the response is written. With the
+        default scope FastAPI closes it only after the response is sent, and one client
+        that stops reading held the lock -- and so every database route -- indefinitely
+        (review round 2, measured).
         """
         async with request.app.state.db_lock:
             conn = await run_in_threadpool(db.connect, request.app.state.config.db_path)
@@ -420,7 +426,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         dependencies=[Depends(body_within_limit), Depends(require_key)],
     )
     def create_link(
-        body: CreateLink, conn: sqlite3.Connection = Depends(get_conn)
+        body: CreateLink, conn: sqlite3.Connection = Depends(get_conn, scope="function")
     ) -> dict[str, str]:
         # Read once and reuse for `created_at`: two separate reads of the clock would let
         # a tick land between the "is this still in the future" check and the row's own
@@ -468,7 +474,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.delete("/-/api/links/{name}", status_code=204, dependencies=[Depends(require_key)])
     def delete_link(
-        name: str, conn: sqlite3.Connection = Depends(get_conn)
+        name: str, conn: sqlite3.Connection = Depends(get_conn, scope="function")
     ) -> Response:
         folded = names.normalise(name)
         if folded is None:
@@ -485,7 +491,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/-/api/links/{name}/stats", dependencies=[Depends(require_key)])
     def link_stats(
-        name: str, conn: sqlite3.Connection = Depends(get_conn)
+        name: str, conn: sqlite3.Connection = Depends(get_conn, scope="function")
     ) -> dict[str, dict[str, int]]:
         """R-008: one link's count for each UTC day, as ``{"days": {"YYYY-MM-DD": count}}``.
 
@@ -511,7 +517,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         return {"days": days}
 
     @app.get("/-/stats", dependencies=[Depends(require_basic_key)])
-    def stats_page(conn: sqlite3.Connection = Depends(get_conn)) -> HTMLResponse:
+    def stats_page(conn: sqlite3.Connection = Depends(get_conn, scope="function")) -> HTMLResponse:
         """R-010: every link with its count for each day, plain HTML, behind the key.
 
         Never calls into ``counts``: opening the page must not count as a follow.
@@ -529,7 +535,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.api_route("/{name}", methods=["GET", "HEAD"])
     @app.api_route("/{name}/", methods=["GET", "HEAD"])
-    def follow(name: str, conn: sqlite3.Connection = Depends(get_conn)) -> Response:
+    def follow(name: str, conn: sqlite3.Connection = Depends(get_conn, scope="function")) -> Response:
         """The whole experience of the person clicking: one hop, no credential, no cookie.
 
         A query string on the short link is dropped rather than merged into the target
