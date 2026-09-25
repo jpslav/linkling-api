@@ -8,6 +8,18 @@ on:
 # Every action is pinned by commit SHA, with the tag it was resolved from beside it; the
 # `github-actions` block of .github/dependabot.yml is set to open the PR that moves a pin (LL-030,
 # ADR-0019).
+#
+# Every job runs on ubuntu-24.04, not on the `ubuntu-latest` alias, which starts moving to Ubuntu
+# 26.04 on 2026-10-19, in a rollout over several weeks that is to be complete by 2026-11-19
+# (actions/runner-images#14748). The Docker jobs below run on whatever Docker and kernel the image
+# ships, so the move should reach them when someone changes the label and watches them go green, not
+# on dates GitHub chose. `ubuntu-latest` was `ubuntu-24.04` when this was pinned (the "Runner Image"
+# of run 36182506686), so the pin changes nothing today. The `github-actions` block of
+# .github/dependabot.yml moves `uses:` references, and a `runs-on` label is not one (GitHub's
+# documentation: "Dependabot only supports updates to GitHub Actions using the GitHub repository
+# syntax", on the "Secure use reference" page, docs.github.com/en/actions/reference/security/secure-use),
+# so this label is moved by hand. tests/test_ll035_runner_pinned.py fails unless every job names a
+# versioned Ubuntu image (`ubuntu-NN.NN`), so an alias or an expression in its place is red.
 
 jobs:
   # pytest runs in the environment the image ships plus the test-only packages, installed under
@@ -21,7 +33,7 @@ jobs:
   # nothing unhashed.
   test:
     name: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -37,21 +49,20 @@ jobs:
   # which Docker Desktop hides (ADR-0015 ii).
   compose:
     name: compose
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/compose-smoke.sh
 
   # The service sends nothing to anyone but the client (ADR-0009, scripts/no-third-party-check.sh).
-  # Only the service: the site needs the private linkling-web checkout, which this workflow's
-  # token cannot fetch (ADR-0015). The job `no-third-party-site` below runs the site half of the
-  # check against a stand-in for it. The second step is the red that makes the first one mean
+  # Only the service: the site half is the job `no-third-party-site` below, which checks out
+  # linkling-web and runs the whole check. The second step is the red that makes the first one mean
   # something: a service that fetches each link's target on create must fail, naming the lookup.
   # The third is the same for the stats page's markup: one that names a third-party stylesheet
   # must fail, naming the host.
   no-third-party:
     name: no-third-party
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: scripts/no-third-party-check.sh --api-only
@@ -80,7 +91,7 @@ jobs:
   # not need pytest, so requirements-test.lock.txt is not part of it.
   no-forbidden-imports:
     name: no-forbidden-imports
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -98,29 +109,51 @@ jobs:
           echo "$out"
           [ "$status" = 1 ] && grep -q "websockets" <<<"$out"
 
-  # LL-028: the site half of the no-third-party check, run in full (no --api-only) on every
-  # build. The real site is the private linkling-web, which this workflow's token cannot fetch
-  # (ADR-0015), so it runs against a stand-in checked into this repo: tests/fixtures/standin-site,
-  # whose server.py says what it is. That shows the crawl runs, and that it goes red when it
-  # should. It is not a check of the real site: the pages linkling-web serves, its nginx and the
-  # deploy/nginx-privacy.conf mounted into it are not exercised here.
-  # The first step is the check itself and must pass. Each step after it puts one deliberate
-  # defect in the stand-in (scripts/no-third-party-standin.sh) and requires the check to end red
-  # in the way that defect must turn it, judged by its last line as well as its exit status:
+  # LL-028, LL-034: the site half of the no-third-party check, run in full (no --api-only) on
+  # every build, against two sites: a stand-in first, then the real one.
+  # The stand-in is tests/fixtures/standin-site, checked into this repo, whose server.py says what
+  # it is. That shows the crawl runs, and that it goes red when it should. It is not a check of
+  # the real site: the pages linkling-web serves, its nginx and the deploy/nginx-privacy.conf
+  # mounted into it are not exercised by it. The first step after the checkouts is the check
+  # itself and must pass. Each of the next four puts one deliberate defect in the stand-in
+  # (scripts/no-third-party-standin.sh) and requires the check to end red in the way that defect
+  # must turn it, judged by its last line as well as its exit status:
   # an external stylesheet is a `fail`; a stylesheet reply cut short, and one that never ends,
   # are `blind`. The stalled reply is what exercises the check's time bound: a check that had lost
   # it would wait for the stand-in's own backstop (STALL_SECONDS in its server.py) and end on a
-  # different message, which the script counts as red. The last is a site that never listens
+  # different message, which the script counts as red. The fourth is a site that never listens
   # (LL-029): `blind`, with a line saying the `web` container is unhealthy, because compose.yaml's
   # `web` healthcheck must keep `docker compose up --wait` from returning. The script also
-  # requires the check's banner to name the fixture. The steps that can wait have a bound of their own too, in case
-  # the wait ever stopped ending.
+  # requires the check's banner to name the fixture. The steps that can wait have a bound of
+  # their own too, in case the wait ever stopped ending.
+  # The real site is jpslav/linkling-web, public since 2026-09-25, so the second checkout reads its
+  # trunk, `main`, with no deploy key and no secret of ours, into the workspace (actions/checkout
+  # refuses a path outside it: src/input-helper.ts). The two steps at the end come last so that a
+  # red there is the site's and not the check's. The first runs the whole check against that
+  # checkout and must pass. The second runs the check's blind arm, which nothing else in CI
+  # reaches: with the site's directory empty or absent it ends `blind`, never `pass`, which is what
+  # the first step relies on if a checkout ever leaves nothing where it looks. A clean site cannot
+  # show the check going red, so the stand-in stays. And because the checkout follows
+  # linkling-web's `main`, a push there can turn a build here red without a change here.
+  # The other way round too (LL-035): linkling-web's own CI has a job of this name, which checks out
+  # this repository at `main` and runs scripts/no-third-party-check.sh from it against its own
+  # checkout, so a regression in the site is caught when it is proposed there, without a build here.
+  # A change on this repository's `main` to that script, to what it builds (compose.yaml, the
+  # Dockerfile, deploy/nginx-privacy.conf, scripts/no-third-party/) or to what it needs of the site
+  # reaches linkling-web's builds as soon as it merges.
   no-third-party-site:
     name: no-third-party-site
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: check out the real site, which is public
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: jpslav/linkling-web
+          ref: main
+          path: linkling-web
+          persist-credentials: false
       - name: the whole check passes against the stand-in site
         run: LINKLING_WEB_DIR=tests/fixtures/standin-site scripts/no-third-party-check.sh
       - name: the check fails a site that loads an external stylesheet
@@ -133,3 +166,16 @@ jobs:
       - name: the stack is not ready while the site never listens
         timeout-minutes: 5
         run: scripts/no-third-party-standin.sh never-listens
+      - name: the whole check passes against the real site
+        run: LINKLING_WEB_DIR=linkling-web scripts/no-third-party-check.sh
+      - name: the check is blind, not clean, when the site checkout is empty or absent
+        run: |
+          set +e
+          empty="$(mktemp -d)"
+          for dir in "$empty" "$empty/absent"; do
+            out="$(LINKLING_WEB_DIR="$dir" scripts/no-third-party-check.sh 2>&1)"
+            status=$?
+            echo "$out"
+            [ "$status" = 2 ] || exit 1
+            grep -qF "blind: no linkling-web checkout at $dir, so the site cannot be checked" <<<"$out" || exit 1
+          done

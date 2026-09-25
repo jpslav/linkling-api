@@ -37,12 +37,15 @@
 # deployer puts in front. The README's "Run it with Docker" names the same limits.
 #
 # Usage: scripts/no-third-party-check.sh [--api-only] [--mutate api|api-page|web-net|web-page]
-#   --api-only  check only the service. CI's `no-third-party` job uses it, because CI cannot
-#               fetch the private linkling-web checkout the site is built from (ADR-0015). CI's
+#   --api-only  check only the service. CI's `no-third-party` job uses it, because CI's
 #               `no-third-party-site` job runs the whole check instead, with LINKLING_WEB_DIR
 #               pointed at a stand-in (tests/fixtures/standin-site, LL-028): that shows the
-#               crawl runs and goes red, not that the real site is clean. Without --api-only, a
-#               missing checkout is blind, never a silent skip.
+#               crawl runs and goes red, not that the real site is clean; and then at a checkout
+#               of the public linkling-web (LL-034), which is the check of the real site.
+#               Without --api-only, a missing checkout is blind, never a silent skip.
+#               linkling-web's own CI runs this script too (LL-035), from a checkout of this
+#               repository at `main`, with LINKLING_WEB_DIR pointed at its own checkout, so what
+#               the script needs of a site directory and of this repository is also that job's.
 #   --mutate    layer in a deliberate leak from scripts/no-third-party/mutations/, to show the
 #               check going red. Each must fail and name what it saw.
 #
@@ -56,7 +59,7 @@
 #   LINKLING_WEB_DIR        the linkling-web checkout (default ../linkling-web, as compose.yaml);
 #                           any directory whose Dockerfile builds a container that serves `/`,
 #                           `/privacy.html` and their stylesheets on port 80 will do, which is how
-#                           CI runs the stand-in
+#                           CI runs the stand-in and a checkout of the real site
 #   LINKLING_NO3P_FIXTURE   the name of the deliberate defect the site was built with, set by the
 #                           wrapper that put one there (scripts/no-third-party-standin.sh). It is
 #                           only printed, in the banner, so a log of a red run says which defect it
