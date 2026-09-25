@@ -1,13 +1,13 @@
 """LL-035 -- every job runs on a versioned Ubuntu image (`ubuntu-NN.NN`), not on an alias.
 
-The `ubuntu-latest` alias moves to Ubuntu 26 from 2026-10-19 (actions/runner-images#14748), and the Docker
-jobs run on whatever Docker and kernel the image ships. A `runs-on` label is not a `uses:` reference, which
-is all the actions block of .github/dependabot.yml moves, so a pin is moved by hand and nothing else keeps
-it there. This reads every workflow and fails on a job whose `runs-on` is anything but a versioned Ubuntu
-label: an alias (`ubuntu-latest`, `ubuntu-slim`), an expression that hides what it resolves to
-(`${{ matrix.os }}`, `${{ vars.RUNNER }}`) and a block list all move or hide the image, so going back to
-one of them, or adding a job that uses it, is red here and not silently a change of image on a date
-GitHub chose. Moving to `ubuntu-26.04` on purpose is a one-line change to the workflow and none to this test.
+The comment at the top of .github/workflows/ci.yml says why the jobs are pinned (the `ubuntu-latest`
+alias is about to move to Ubuntu 26.04) and why the pin is moved by hand. Nothing else keeps it there.
+This reads every workflow and fails on a job whose `runs-on` is anything but a versioned Ubuntu label:
+an alias (`ubuntu-latest`, `ubuntu-slim`), an expression that hides what it resolves to
+(`${{ matrix.os }}`, `${{ vars.RUNNER }}`) and a block list all move or hide the image, so going back
+to one of them, or adding a job that uses it, is red here and not silently a change of image on a
+date GitHub chose. Moving to `ubuntu-26.04` on purpose is a one-line change to the workflow and none
+to this test.
 """
 
 from __future__ import annotations

@@ -157,10 +157,11 @@ the locks under `pip install --require-hashes`, so a lock PR is exercised by the
 only by the image build. The websockets/wsproto guard (`scripts/no-forbidden-imports-check.sh`)
 runs against the new lock in the image build of the `compose` and `no-third-party` jobs (it is called
 from the `Dockerfile`) and in the `no-forbidden-imports` job. A green one is merged; a red one is the exception to look at. Nobody has to
-re-lock or re-pin by hand. The one pin that is moved by hand is the runner: every job runs on
-`ubuntu-24.04` and not on the `ubuntu-latest` alias, which moves to Ubuntu 26 from 2026-10-19, and
-Dependabot does not move a `runs-on` label (`tests/test_ll035_runner_pinned.py` fails if a job goes
-back to an alias).
+re-lock or re-pin by hand. The runner is not one of these pins: every job runs on `ubuntu-24.04`,
+not on the `ubuntu-latest` alias, and a `runs-on` label is not the action reference that Dependabot's
+actions block moves, so a person moves it. The comment at the top of `.github/workflows/ci.yml` says
+why it is pinned, and `tests/test_ll035_runner_pinned.py` fails unless every job names a versioned
+Ubuntu image.
 
 Two things make that work, and tests fail when either breaks. `requirements.lock.in` and
 `requirements-test.lock.in` sit beside their `.txt` and say what `pyproject.toml` says (the

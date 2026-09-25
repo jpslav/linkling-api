@@ -61,9 +61,9 @@ token reaches only its own repository, so a check in `linkling-web` needs a cred
 read `linkling-api`.
 
 > ⚠️ **Superseded 2026-09-25** — both repos are public; see `products/linkling/DECISIONS.md` in
-> the program repo. A workflow in `linkling-web` reads `linkling-api` with no credential, and
-> LL-035 has one do it. The rest of this record, the table below included, was not reviewed for
-> that change.
+> the program repo. A workflow in `linkling-web` reads `linkling-api` with no deploy key or secret
+> of ours (the checkout action passes the workflow's own token), and LL-035 has one do it. The
+> rest of this record, the table below included, was not reviewed for that change.
 
 | Option | Blind case — what it prints when it measures nothing | Recurring |
 |---|---|---|
