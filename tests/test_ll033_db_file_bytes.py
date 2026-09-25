@@ -11,8 +11,7 @@ the same UTC days, the same link is deleted and the same link expires. What diff
 everything finer than a day, and what a deleted link used to hold:
 
 - the order of every day's follows (so the order of each day's first follows);
-- how often the deleted link was followed before it went (3 against 140, which crosses the
-  128 at which SQLite stores a count in two bytes);
+- how often the deleted link was followed before it went (3 against 140);
 - the deleted link's target, in text and in length.
 
 If the files are a function of the day-level content alone, the two histories leave the
@@ -24,9 +23,15 @@ open" listed.
 - ``at-rest``: after the last request, with the service still running.
 - ``mid-request``: inside the last follow, with the service's connection open and its
   write done -- a backup that races a request.
-- ``another-connection-open``: a second connection held open for the whole history. Under
-  the code before ADR-0021 that is what overlapping requests did; now it is a process
-  outside the service, such as an operator's ``sqlite3`` shell left open.
+- ``another-connection-open``: a second connection held open, idle, for the whole
+  history. Under the code before ADR-0021 that is what overlapping requests did; now it is
+  a process outside the service, such as an operator's ``sqlite3`` shell left open. It
+  holds no read transaction; ``test_a_foreign_open_read_does_not_hold_up_a_write`` covers
+  one that does.
+
+Each kind of write that moves a cell -- a create, a first and a second follow, a count
+reaching 128, a delete -- is also checked straight after it happens, and a file of many
+pages is checked by comparing bytes.
 
 **Blind is never a pass.** A copy with no database bytes, a page walk that does not find
 every row, a search that cannot find a live link's record or target, and a ``-wal`` missing

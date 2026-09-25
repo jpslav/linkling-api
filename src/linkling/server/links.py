@@ -14,7 +14,9 @@ declares ``target TEXT NOT NULL``, so the dropped target is written as the empty
 Whether the column should be nullable instead was put to the owner and decided on
 2026-09-25, by ``pm-3`` under the owner's line: the empty string stands. ADR-0005's
 consequence sentence now says so (LL-033). Deleting also rewrites the database file
-(``db.settle``, ADR-0021), so the old target is not left behind in freed space either.
+(``db.settle``, ADR-0021), so the old target is not left behind in freed space either --
+once the rewrite has landed, which another process holding a read open can put off
+(ADR-0021, "What stays").
 """
 
 from __future__ import annotations

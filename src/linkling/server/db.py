@@ -53,8 +53,8 @@ _WAL_RETRY_SECONDS = 0.05
 #: Counts at which SQLite's record format stores an integer in more bytes than the count
 #: before it (https://sqlite.org/fileformat2.html, "Serial Type Codes"): 1 is stored in no
 #: bytes, 2..127 in one, 128..32767 in two, and so on. At these counts the counter's cell
-#: grows and moves; at every other count SQLite overwrites it in place. A count of 1 is a
-#: new row. ADR-0021.
+#: grows and moves; at every other count SQLite overwrites it in place (measured: 2 to 3
+#: and 3 to 4 left every cell offset where it was). A count of 1 is a new row. ADR-0021.
 RELAYOUT_COUNTS = frozenset({1, 2, 128, 32768, 8388608, 2147483648, 140737488355328})
 
 #: What the header's file change counter and version-valid-for (offsets 24 and 92) are set
@@ -145,8 +145,8 @@ def settle(conn: sqlite3.Connection, *, relayout: bool) -> None:
         _deferred.add(path)
         if not _checkpoint(conn):
             # Another process holds a read open. A rewrite now would put a copy of every
-            # page into a WAL that cannot be emptied until it ends: 2.4 MB more per write,
-            # measured. A later request rewrites instead.
+            # page into a WAL that cannot be emptied until it ends: the -wal of a 2.4 MB
+            # file grew by 2.4 MB per create (review round 2). A later request rewrites.
             return
         canonicalise(conn)
     if not _checkpoint(conn):
@@ -182,7 +182,7 @@ def _checkpoint(conn: sqlite3.Connection) -> bool:
     reader before giving up, while the service's lock queues every other request behind
     it: 8 requests took 21.5 s against a foreign ``BEGIN; SELECT`` (review round 2). A
     reader the checkpoint cannot pass is not going to end on this request's account, so it
-    gives up at once and the next write tries again.
+    gives up at once; a later request's settle tries again.
     """
     conn.execute("PRAGMA busy_timeout=0")
     try:
@@ -245,7 +245,8 @@ def _reset_change_counter(conn: sqlite3.Connection) -> None:
     commit that rewrites page 1 on a fresh connection writes the counter it last read plus
     one, and ``VACUUM`` always rewrites page 1. Left alone, it counted canonicalisations:
     history A and history B, differing in how often a since-deleted link was followed,
-    ended at 152 and 153.
+    ended at 152 and 153 (measured before this function existed, on the prototype of
+    LL-033). Removing it now turns ``test_leak_1_…`` red in all three copy cases.
 
     Why this is safe: "In WAL mode, changes to the database are detected using the
     wal-index and so the change counter is not needed" (the same page). A second
