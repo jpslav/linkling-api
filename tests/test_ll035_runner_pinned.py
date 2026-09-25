@@ -1,10 +1,13 @@
-"""LL-035 -- every job runs on a named runner image, not on the `ubuntu-latest` alias.
+"""LL-035 -- every job runs on a versioned Ubuntu image (`ubuntu-NN.NN`), not on an alias.
 
-The alias moves to Ubuntu 26 from 2026-10-19 (actions/runner-images#14748), and the Docker jobs run on
-whatever Docker and kernel the image ships. Dependabot does not move a `runs-on` label, so a pin is
-moved by hand and nothing else keeps it there. This reads every workflow and fails on a job whose
-`runs-on` names an alias, so going back to `ubuntu-latest` (or adding a job that uses it) is red here,
-not silently a change of image on a date GitHub chose.
+The `ubuntu-latest` alias moves to Ubuntu 26 from 2026-10-19 (actions/runner-images#14748), and the Docker
+jobs run on whatever Docker and kernel the image ships. A `runs-on` label is not a `uses:` reference, which
+is all the actions block of .github/dependabot.yml moves, so a pin is moved by hand and nothing else keeps
+it there. This reads every workflow and fails on a job whose `runs-on` is anything but a versioned Ubuntu
+label: an alias (`ubuntu-latest`, `ubuntu-slim`), an expression that hides what it resolves to
+(`${{ matrix.os }}`, `${{ vars.RUNNER }}`) and a block list all move or hide the image, so going back to
+one of them, or adding a job that uses it, is red here and not silently a change of image on a date
+GitHub chose. Moving to `ubuntu-26.04` on purpose is a one-line change to the workflow and none to this test.
 """
 
 from __future__ import annotations
@@ -16,7 +19,8 @@ WORKFLOWS = Path(__file__).resolve().parent.parent / ".github" / "workflows"
 
 
 def _runs_on() -> list[tuple[str, str]]:
-    """(workflow file, the value of each `runs-on:` outside a comment), in order."""
+    """(workflow file, the value of each `runs-on:` outside a comment), in order. A block list, whose
+    items are on the following lines, has the value ''."""
     found = []
     for workflow in sorted(WORKFLOWS.glob("*.y*ml")):
         for line in workflow.read_text().splitlines():
@@ -35,9 +39,10 @@ def test_the_walk_finds_the_jobs_it_is_about_to_judge():
     assert any(name == "ci.yml" for name, _ in found), f"no `runs-on:` found in {WORKFLOWS}: {found}"
 
 
-def test_no_job_runs_on_a_moving_alias():
-    aliases = [(name, value) for name, value in _runs_on() if "latest" in value.lower()]
-    assert not aliases, (
-        "these jobs run on an alias that moves on GitHub's schedule, not a named image "
-        f"(README, 'Keeping the pins fresh'): {aliases}"
+def test_every_job_runs_on_a_versioned_ubuntu_image():
+    unpinned = [(name, value) for name, value in _runs_on() if not re.fullmatch(r"ubuntu-\d{2}\.\d{2}", value)]
+    assert not unpinned, (
+        "these jobs do not name a versioned Ubuntu image (an alias such as ubuntu-latest or ubuntu-slim, an "
+        "expression, or a list, moves on GitHub's schedule or hides what it resolves to; README, 'Keeping "
+        f"the pins fresh'): {unpinned}"
     )
