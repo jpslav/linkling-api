@@ -162,9 +162,9 @@ got="$answer"
 echo "follow before restart: $got"
 
 # (4) The image serves the manifest this checkout ships, byte for byte (ADR-0008 §c, ADR-0020).
-# It is fetched to a file through `ask` and compared after, so a fetch that got no answer is
-# `blind`, while a wrong status or a different body is `fail`. Piping curl straight into `cmp`
-# would make the two look the same.
+# It is fetched to a file through `ask` and compared after. A fetch that got no answer, or a
+# body that did not arrive whole, is `blind`. A wrong status or a different body is `fail`.
+# Piping curl straight into `cmp` would make the two look the same.
 ask -o "$served_manifest" "fetching /-/privacy.json" '%{http_code}' "$base/-/privacy.json"
 [ "$answer" = 200 ] || fail "/-/privacy.json answered $answer, not 200"
 cmp -s "$served_manifest" src/linkling/server/privacy/what-we-store.json \

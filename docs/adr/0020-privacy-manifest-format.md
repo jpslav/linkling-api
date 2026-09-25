@@ -102,13 +102,16 @@ need an exception list, and an exception list is how the first real omission wou
 `tests/test_ll015_privacy_manifest.py` holds both of ADR-0008 §c's tests:
 
 1. **Schema.** It migrates a fresh database and compares the `(table, column)` set from
-   `sqlite_master` and `PRAGMA table_info` with the manifest's, in both directions. An empty
+   `sqlite_master` and `PRAGMA table_xinfo` with the manifest's, in both directions.
+   `table_xinfo`, not `table_info`, because `table_info` leaves out generated columns, and a
+   `STORED` one is written to the file. An empty
    side fails with a message beginning `blind:`, never with a pass.
 2. **Retention.** It reads each column's claim out of the manifest and checks that claim
-   against a real delete and a real expiry. It hard-codes no column's behaviour. The set of
-   columns it checked must equal the manifest's set, which is how this test guards against
-   emptiness: a column it never exercised fails the test instead of being skipped. A table
-   the test does not know how to relate to a link also fails it, by name.
+   against a real delete and a real expiry, for every column the manifest declares. It
+   hard-codes no column's behaviour. It guards against emptiness in three ways, and each
+   fails the test rather than passing it: a manifest with no columns, a table holding no
+   rows for the link before the event, and a table the test does not know how to relate to
+   a link, which it names.
 
 So a new column fails the schema test until the manifest declares it, and the declaration
 carries an `on_delete` and an `on_expiry` claim that the retention test then enforces. Nobody
@@ -131,9 +134,10 @@ Two owner questions are open in `products/linkling/STAKEHOLDER-QUEUE.md` in the 
 repository. This ADR answers neither.
 
 - **Whether a deleted link's target is stored as the empty string or as NULL.** The manifest
-  says what the code does today, `on_delete: "emptied"`. If the owner rules NULL, one word of
-  the manifest and one assignment in `links.delete` change together. The retention test needs
-  no edit, and it fails until both have changed.
+  says what the code does today, `on_delete: "emptied"`. If the owner rules NULL, three
+  things change together: one word of the manifest, the assignment in `links.delete`, and a
+  migration, because `links.target` is `NOT NULL` (`0001_links.sql`). The retention test needs
+  no edit, and it fails until the manifest and the code agree.
 - **Whether the privacy promise covers the database file's raw bytes.** The manifest declares
   what the service stores and can read back through SQL, table by table. It says nothing either
   way about freed pages or the order of cells in a page.
@@ -145,4 +149,5 @@ repository. This ADR answers neither.
 - The deployed service always serves the manifest it was built with. `scripts/compose-smoke.sh`
   checks that the image's copy is byte-identical to the checkout's, and
   `scripts/no-third-party-check.sh` exercises the route.
-- A schema change without a manifest change cannot pass CI.
+- A column added or removed without the same change to the manifest cannot pass CI. Nor can
+  a change to what deleting or expiring a link does to a column.

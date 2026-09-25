@@ -11,7 +11,7 @@
           "on_expiry": "kept"
         },
         "day": {
-          "purpose": "The UTC calendar date the follows happened on, as YYYY-MM-DD. Nothing finer than a day is stored.",
+          "purpose": "The UTC calendar date the follows happened on, as YYYY-MM-DD.",
           "retention": "Kept while the link exists, including after it expires. Removed with the rest of the row when the link is deleted.",
           "on_delete": "removed",
           "on_expiry": "kept"
@@ -64,7 +64,7 @@
           "on_expiry": "kept"
         },
         "created_by": {
-          "purpose": "An optional free-text label sent by whoever made the link, such as their name. The service does not check it.",
+          "purpose": "An optional free-text label sent by whoever made the link, such as their name. The service does not check that it is true.",
           "retention": "Kept while the link exists, including after it expires. Erased when the link is deleted.",
           "on_delete": "nulled",
           "on_expiry": "kept"
